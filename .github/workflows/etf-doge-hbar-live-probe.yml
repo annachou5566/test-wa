@@ -1,0 +1,29 @@
+name: DOGE HBAR live acquisition probe
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/etf_doge_hbar_live_probe.py'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Capture public first-party BWOW and HBR artifacts
+        run: python scripts/etf_doge_hbar_live_probe.py
+      - name: Upload one-shot evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: doge-hbar-live-artifacts
+          path: artifacts/doge-hbar-live/
+          retention-days: 1
+          if-no-files-found: error
