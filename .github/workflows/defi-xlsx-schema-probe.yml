@@ -10,6 +10,7 @@ on:
 permissions:
   contents: read
 
+# One-shot public-safe evidence only; this workflow is removed after capture.
 jobs:
   probe:
     runs-on: ubuntu-latest
