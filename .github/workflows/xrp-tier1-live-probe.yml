@@ -1,0 +1,33 @@
+name: XRP Tier1 live acquisition probe
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/xrp_tier1_live_probe.py'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install public probe dependencies
+        run: |
+          python -m pip install --disable-pip-version-check requests playwright
+          command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser
+      - name: Capture public first-party XRP issuer artifacts
+        run: python scripts/xrp_tier1_live_probe.py
+      - name: Upload one-shot evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: xrp-tier1-live-artifacts
+          path: artifacts/xrp-tier1-live/
+          retention-days: 1
+          if-no-files-found: error
