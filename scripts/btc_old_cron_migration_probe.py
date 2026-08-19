@@ -11,25 +11,10 @@ OUT.mkdir(parents=True, exist_ok=True)
 MAX_BYTES = 2 * 1024 * 1024
 
 FUNDS = {
-    "FBTC": {
-        "url": "https://digital.fidelity.com/prgw/digital/research/quote/dashboard/summary?symbol=FBTC",
-        "clicks": [],
-        "markers": ["Total bitcoin in fund", "Shares outstanding", "NAV", "As of"],
-    },
     "BTCO": {
-        "url": "https://www.invesco.com/us/en/financial-products/etfs/holdings?audienceType=Investor&ticker=BTCO",
+        "url": "https://www.invesco.com/us/en/financial-products/etfs/invesco-galaxy-bitcoin-etf.html",
         "clicks": ["Individual Investor", "Confirm"],
-        "markers": ["Total units of crypto", "Shares Outstanding", "NAV", "As of"],
-    },
-    "BRRR": {
-        "url": "https://coinshares.com/etf/brrr/",
-        "clicks": [],
-        "markers": ["XBTUSD", "BITCOIN", "As of date", "AuM"],
-    },
-    "EZBC": {
-        "url": "https://www.franklintempleton.com/investments/options/exchange-traded-funds/products/39639/SINGLCLASS/franklin-bitcoin-etf/EZBC",
-        "clicks": ["Individual Investor", "Continue"],
-        "markers": ["Bitcoin in Fund", "Bitcoin per Basket", "Shares Outstanding", "Total Net Assets", "NAV"],
+        "markers": ["Total units of crypto", "Shares Outstanding", "Fund characteristics", "NAV", "BTCO", "Bitcoin"],
     },
 }
 
@@ -55,18 +40,17 @@ def click_if_visible(page, text: str) -> bool:
 
 
 def bounded_scroll(page) -> None:
-    for _ in range(8):
+    for _ in range(10):
         page.evaluate("window.scrollBy(0, 700)")
         page.wait_for_timeout(350)
     page.evaluate("window.scrollTo(0, 0)")
 
 
 def capture(page, ticker: str, spec: dict) -> dict:
-    started = datetime.now(timezone.utc).isoformat()
     meta = {
         "ticker": ticker,
         "source_url": spec["url"],
-        "started_at_utc": started,
+        "started_at_utc": datetime.now(timezone.utc).isoformat(),
         "transport": "ordinary-system-chrome-direct-first-party",
         "third_party_proxy_used": False,
         "stealth_used": False,
@@ -85,18 +69,17 @@ def capture(page, ticker: str, spec: dict) -> dict:
     try:
         response = page.goto(spec["url"], wait_until="domcontentloaded", timeout=30000)
         meta["http_status"] = response.status if response else None
-        page.wait_for_timeout(1500)
+        page.wait_for_timeout(1800)
         for text in spec.get("clicks", []):
             if click_if_visible(page, text):
                 meta["clicked_visible_controls"].append(text)
         bounded_scroll(page)
-        page.wait_for_timeout(3000)
+        page.wait_for_timeout(3500)
         text = normalized_text(page.locator("body").inner_text(timeout=5000))
         data = text.encode("utf-8")
         if len(data) > MAX_BYTES:
             raise RuntimeError(f"SOURCE_TOO_LARGE:{len(data)}")
-        path = OUT / f"{ticker}.txt"
-        path.write_bytes(data)
+        (OUT / f"{ticker}.txt").write_bytes(data)
         meta["final_url"] = page.url
         meta["title"] = page.title()
         meta["size_bytes"] = len(data)
@@ -146,7 +129,7 @@ def main() -> None:
         finally:
             browser.close()
     summary = {
-        "scope": "BTC_OLD_CRON_MIGRATION_DIRECT_FIRST_PARTY_ONLY",
+        "scope": "BTC_BTCO_CURRENT_OFFICIAL_PAGE_DIRECT_FIRST_PARTY_ONLY",
         "retrieved_at_utc": datetime.now(timezone.utc).isoformat(),
         "funds": results,
         "secrets_used": False,
