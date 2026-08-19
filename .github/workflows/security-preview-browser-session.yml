@@ -39,6 +39,7 @@ jobs:
           const rows = [];
           let failures = 0;
           let browser;
+          let mainNavigations = 0;
 
           const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
           function record(name, status, detail = '') {
@@ -67,6 +68,27 @@ jobs:
             }
             return { first429: 0, before, other };
           }
+          async function stableEval(page, fn, timeoutMs = 90000) {
+            let lastError = null;
+            for (let attempt = 1; attempt <= 4; attempt += 1) {
+              try {
+                await page.waitForLoadState('domcontentloaded', { timeout: 30000 }).catch(() => {});
+                await sleep(5000);
+                const installed = await page.evaluate(() => Boolean(window.WaveSecurity?.installed));
+                if (!installed) throw new Error('wave_security_client_not_installed');
+                return await Promise.race([
+                  page.evaluate(fn),
+                  new Promise((_, reject) => setTimeout(() => reject(new Error('browser_session_timeout')), timeoutMs)),
+                ]);
+              } catch (error) {
+                lastError = error;
+                const text = String(error?.message || error);
+                if (!text.includes('Execution context was destroyed') && !text.includes('navigation')) break;
+                await sleep(3000);
+              }
+            }
+            throw lastError || new Error('stable_eval_failed');
+          }
 
           try {
             browser = await chromium.launch({ headless: true });
@@ -74,6 +96,9 @@ jobs:
             const page = await context.newPage();
             let capturedToken = '';
 
+            page.on('framenavigated', frame => {
+              if (frame === page.mainFrame()) mainNavigations += 1;
+            });
             page.on('request', request => {
               try {
                 if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/security/session') {
@@ -84,25 +109,23 @@ jobs:
             });
 
             await page.goto(TARGET, { waitUntil: 'domcontentloaded', timeout: 60000 });
+            await sleep(8000);
             const ua = await page.evaluate(() => navigator.userAgent);
 
             let first;
             try {
-              first = await Promise.race([
-                page.evaluate(async () => {
-                  const response = await fetch('/api/etf-flows');
-                  return { status: response.status, text: await response.text() };
-                }),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('browser_session_timeout')), 90000)),
-              ]);
+              first = await stableEval(page, async () => {
+                const response = await fetch('/api/etf-flows');
+                return { status: response.status, text: await response.text() };
+              });
             } catch (error) {
-              record('VALID_BROWSER_SESSION', 'NOT_PROVEN', String(error?.message || error));
+              record('VALID_BROWSER_SESSION', 'NOT_PROVEN', `${String(error?.message || error)} navigations=${mainNavigations}`);
             }
 
             const cookies = await context.cookies(TARGET);
             const session = cookies.find(cookie => cookie.name === '__Host-wa_session');
             if (first?.status === 200 && session?.value) {
-              record('VALID_BROWSER_SESSION', 'PASS', 'protected_fetch=200 session_cookie_present');
+              record('VALID_BROWSER_SESSION', 'PASS', `protected_fetch=200 navigations=${mainNavigations}`);
 
               const replayControl = await direct('/api/etf-flows?qa=replay-control', ua, session.value);
               if (replayControl.status === 200) {
@@ -155,7 +178,7 @@ jobs:
                 record('STANDARD_READ_RATE_LIMIT', 'FAIL', `no_429 prelimit=${standard.before} other=${standard.other}`);
               }
             } else if (first) {
-              record('VALID_BROWSER_SESSION', 'NOT_PROVEN', `protected_fetch_http=${first.status} cookie=${Boolean(session)}`);
+              record('VALID_BROWSER_SESSION', 'NOT_PROVEN', `protected_fetch_http=${first.status} cookie=${Boolean(session)} navigations=${mainNavigations}`);
             }
           } catch (error) {
             record('BROWSER_PROBE_RUNTIME', 'FAIL', String(error?.message || error));
