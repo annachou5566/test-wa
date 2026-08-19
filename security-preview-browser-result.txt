@@ -1,4 +1,4 @@
 target=https://704e00e8.wave-alpha.pages.dev
-timestamp_utc=2026-08-19T01:29:41.508Z
-VALID_BROWSER_SESSION              NOT_PROVEN page.evaluate: Execution context was destroyed, most likely because of a navigation.
+timestamp_utc=2026-08-19T01:34:46.833Z
+VALID_BROWSER_SESSION              NOT_PROVEN browser_session_timeout navigations=2
 FAIL=0
