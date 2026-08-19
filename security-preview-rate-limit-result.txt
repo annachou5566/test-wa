@@ -1,0 +1,8 @@
+target=https://704e00e8.wave-alpha.pages.dev
+workflow_head=6f7b72858c4f7987ed0bbe1eb5de907c95e2b16f
+timestamp_utc=2026-08-19T01:25:43Z
+attempts_before_stop=53
+http_403=52
+other=0
+first_429_attempt=53
+SESSION_MINT_RATE_LIMIT PASS
