@@ -13,16 +13,16 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install bounded public probe dependencies
+      - name: Install lightweight public probe dependencies
         run: |
           python -m pip install --disable-pip-version-check requests playwright
-          python -m playwright install --with-deps chromium
+          command -v google-chrome || command -v google-chrome-stable || command -v chromium || command -v chromium-browser
       - name: Capture public first-party issuer artifacts
         run: python scripts/etf_tier1_live_probe.py
       - name: Upload one-shot evidence
