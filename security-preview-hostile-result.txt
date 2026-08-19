@@ -1,0 +1,15 @@
+target=https://704e00e8.wave-alpha.pages.dev
+workflow_head=e80f05ce54301794eee4e460d83c357ef4fdaac4
+timestamp_utc=2026-08-19T01:24:10Z
+DIRECT_ANONYMOUS                   PASS  http=403 denied
+MISSING_COOKIE                     PASS  http=401 session_required
+MALFORMED_COOKIE                   PASS  http=401 session_required
+CROSS_ORIGIN                       PASS  http=403 denied
+WRONG_METHOD                       PASS  http=405 allow=GET
+CONFIG_MIN_DISCLOSURE              PASS  http=200 keys=sitekey,action
+OVERSIZED_SESSION_BODY             PASS  http=400 rejected_before_exchange
+INVALID_TURNSTILE                  PASS  http=403 denied
+PROTECTED_HEADERS                  PASS  private/no-store + CORP + nosniff + frame/referrer/robots
+PROXY_TEXT_READER                  PASS  proxy_http=200 proprietary_json_absent
+SESSION_MINT_RATE_LIMIT            FAIL  no_429_within_16_attempts
+PASS=10 FAIL=1
