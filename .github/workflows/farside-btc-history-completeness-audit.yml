@@ -1,0 +1,26 @@
+name: Farside BTC history completeness audit
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Audit exact public Farside BTC history table
+        run: python scripts/farside_btc_history_completeness_audit.py
+      - name: Upload public evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: farside-btc-history-completeness
+          path: artifacts/farside-btc-history-completeness
+          if-no-files-found: error
+          retention-days: 3
