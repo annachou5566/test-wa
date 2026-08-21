@@ -1,9 +1,9 @@
 name: BTCO adjacent snapshot probe
 
 on:
-  push:
+  pull_request:
     branches:
-      - qa/btco-adjacent-2026-08-21
+      - main
 
 permissions:
   contents: read
