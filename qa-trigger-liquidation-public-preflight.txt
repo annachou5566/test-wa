@@ -1,1 +1,0 @@
-trigger synchronize after workflow exists
