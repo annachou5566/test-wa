@@ -1,0 +1,32 @@
+name: EZBC current state one-shot
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  ezbc-current-state:
+    if: github.head_ref == 'qa/ezbc-current-state-2026-08-21'
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Playwright package only
+        run: python -m pip install --disable-pip-version-check playwright==1.62.0
+      - name: Capture one current first-party EZBC state
+        run: python scripts/ezbc_current_state_probe.py
+      - name: Upload immutable evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ezbc-current-state-2026-08-21
+          path: artifacts/ezbc-current-state/
+          retention-days: 1
+          if-no-files-found: error
