@@ -1,0 +1,68 @@
+name: liquidation-context-size-probe-20260822
+
+on:
+  push:
+    paths:
+      - '.github/workflows/liquidation-context-size-probe-20260822.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Probe public Liquidation read path
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ROOT="$(mktemp -d)"
+          trap 'rm -rf "$ROOT"' EXIT
+          NOW_MS="$(date +%s%3N)"
+          SNAP='https://wave-alpha-liquidation-coordinator.wavealpha.workers.dev/snapshot'
+          CONTEXT='https://wave-alpha.pages.dev/api/liquidations/context?window=24h&symbol=ALL&exchange=ALL&top=50&projection=full'
+
+          probe_snapshot() {
+            label="$1"
+            span_ms="$2"
+            from_ms="$((NOW_MS-span_ms))"
+            out="$ROOT/$label.json"
+            meta="$(curl -sS --connect-timeout 5 --max-time 30 -o "$out" -w '%{http_code}|%{time_total}|%{size_download}' "$SNAP?from=$from_ms&to=$NOW_MS" || true)"
+            printf 'SNAPSHOT=%s|HTTP_TIME_BYTES=%s\n' "$label" "$meta"
+            python3 - "$out" "$label" <<'PY'
+          import json, sys
+          path, label = sys.argv[1:3]
+          try:
+              body = json.load(open(path))
+          except Exception as exc:
+              print(f'SNAPSHOT_JSON={label}|PARSE_FAIL={type(exc).__name__}')
+              raise SystemExit
+          buckets = body.get('buckets')
+          err = body.get('error')
+          if isinstance(err, dict):
+              err = err.get('code') or err.get('message')
+          print(f'SNAPSHOT_JSON={label}|ok={body.get("ok")}|bucketCount={len(buckets) if isinstance(buckets, dict) else None}|updatedAt={body.get("updatedAt")}|error={err}')
+          PY
+          }
+
+          probe_snapshot 10m 600000
+          probe_snapshot 1h 3600000
+          probe_snapshot 4h 14400000
+          probe_snapshot 24h 86400000
+
+          out="$ROOT/context.json"
+          meta="$(curl -sS --connect-timeout 5 --max-time 30 -o "$out" -w '%{http_code}|%{time_total}|%{size_download}' "$CONTEXT" || true)"
+          printf 'PAGES_CONTEXT|HTTP_TIME_BYTES=%s\n' "$meta"
+          python3 - "$out" <<'PY'
+          import json, sys
+          try:
+              body = json.load(open(sys.argv[1]))
+          except Exception as exc:
+              print(f'PAGES_CONTEXT_JSON|PARSE_FAIL={type(exc).__name__}')
+              raise SystemExit
+          print('PAGES_CONTEXT_JSON|error=' + str(body.get('error')) + '|retryable=' + str(body.get('retryable')) + '|diagnosticsPresent=' + str(isinstance(body.get('diagnostics'), dict)))
+          PY
+
+          printf 'LIQUIDATION_CONTEXT_SIZE_PROBE=END\n'
