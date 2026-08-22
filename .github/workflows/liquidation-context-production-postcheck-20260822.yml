@@ -1,0 +1,57 @@
+name: liquidation-context-production-postcheck-20260822
+
+on:
+  push:
+    paths:
+      - '.github/workflows/liquidation-context-production-postcheck-20260822.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  postcheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - name: Probe Production context after Pages build window
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sleep 45
+          ROOT="$(mktemp -d)"
+          trap 'rm -rf "$ROOT"' EXIT
+          URL='https://wave-alpha.pages.dev/api/liquidations/context?window=24h&symbol=ALL&exchange=ALL&top=50&projection=full'
+          OUT="$ROOT/context.json"
+          META="$(curl -sS --connect-timeout 5 --max-time 15 -o "$OUT" -w '%{http_code}|%{time_total}|%{size_download}' "$URL" || true)"
+          {
+            printf 'PRODUCTION_CONTEXT_POSTCHECK=START\n'
+            printf 'HTTP_TIME_BYTES=%s\n' "$META"
+            python3 - "$OUT" <<'PY'
+          import json, sys
+          try:
+              body = json.load(open(sys.argv[1]))
+          except Exception as exc:
+              print(f'JSON_PARSE=FAIL|{type(exc).__name__}')
+              raise SystemExit
+          diag = body.get('diagnostics') if isinstance(body.get('diagnostics'), dict) else {}
+          print('JSON=error=' + str(body.get('error'))
+                + '|retryable=' + str(body.get('retryable'))
+                + '|storage=' + str(body.get('storage'))
+                + '|freshnessMs=' + str(body.get('freshnessMs'))
+                + '|degraded=' + str(diag.get('degraded'))
+                + '|fallback=' + str(diag.get('realtimeFallbackError'))
+                + '|snapshotUpdatedAt=' + str(diag.get('snapshotUpdatedAt'))
+                + '|observedBuckets24h=' + str(diag.get('observedBuckets24h'))
+                + '|serverBuildMs=' + str(diag.get('serverBuildMs')))
+          PY
+            printf 'PRODUCTION_CONTEXT_POSTCHECK=END\n'
+          } > results/liquidation-context-production-postcheck-20260822.txt
+      - name: Persist public-safe result
+        shell: bash
+        run: |
+          git config user.name 'wave-alpha-qa'
+          git config user.email 'wave-alpha-qa@users.noreply.github.com'
+          git add results/liquidation-context-production-postcheck-20260822.txt
+          git commit -m 'QA: record Liquidation context Production postcheck'
+          git push
