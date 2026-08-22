@@ -1,0 +1,4 @@
+PRODUCTION_CONTEXT_POSTCHECK=START
+HTTP_TIME_BYTES=200|5.483640|70320
+JSON=error=None|retryable=None|storage=durable-object|freshnessMs=45207|degraded=False|fallback=None|snapshotUpdatedAt=2026-08-22T08:30:43.393Z|observedBuckets24h=1440|serverBuildMs=4680
+PRODUCTION_CONTEXT_POSTCHECK=END
