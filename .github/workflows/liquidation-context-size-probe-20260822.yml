@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   probe:
@@ -16,9 +16,12 @@ jobs:
     steps:
       - name: Probe public Liquidation read path
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -Eeuo pipefail
           ROOT="$(mktemp -d)"
+          RESULT="$ROOT/result.txt"
           trap 'rm -rf "$ROOT"' EXIT
           NOW_MS="$(date +%s%3N)"
           SNAP='https://wave-alpha-liquidation-coordinator.wavealpha.workers.dev/snapshot'
@@ -47,15 +50,17 @@ jobs:
           PY
           }
 
-          probe_snapshot 10m 600000
-          probe_snapshot 1h 3600000
-          probe_snapshot 4h 14400000
-          probe_snapshot 24h 86400000
+          {
+            printf 'LIQUIDATION_CONTEXT_SIZE_PROBE=START|nowMs=%s\n' "$NOW_MS"
+            probe_snapshot 10m 600000
+            probe_snapshot 1h 3600000
+            probe_snapshot 4h 14400000
+            probe_snapshot 24h 86400000
 
-          out="$ROOT/context.json"
-          meta="$(curl -sS --connect-timeout 5 --max-time 30 -o "$out" -w '%{http_code}|%{time_total}|%{size_download}' "$CONTEXT" || true)"
-          printf 'PAGES_CONTEXT|HTTP_TIME_BYTES=%s\n' "$meta"
-          python3 - "$out" <<'PY'
+            out="$ROOT/context.json"
+            meta="$(curl -sS --connect-timeout 5 --max-time 30 -o "$out" -w '%{http_code}|%{time_total}|%{size_download}' "$CONTEXT" || true)"
+            printf 'PAGES_CONTEXT|HTTP_TIME_BYTES=%s\n' "$meta"
+            python3 - "$out" <<'PY'
           import json, sys
           try:
               body = json.load(open(sys.argv[1]))
@@ -64,5 +69,14 @@ jobs:
               raise SystemExit
           print('PAGES_CONTEXT_JSON|error=' + str(body.get('error')) + '|retryable=' + str(body.get('retryable')) + '|diagnosticsPresent=' + str(isinstance(body.get('diagnostics'), dict)))
           PY
+            printf 'LIQUIDATION_CONTEXT_SIZE_PROBE=END\n'
+          } | tee "$RESULT"
 
-          printf 'LIQUIDATION_CONTEXT_SIZE_PROBE=END\n'
+          DEST='results/liquidation-context-size-probe-20260822.txt'
+          CONTENT="$(base64 -w0 "$RESULT")"
+          EXISTING_SHA="$(gh api "repos/$GITHUB_REPOSITORY/contents/$DEST" --jq .sha 2>/dev/null || true)"
+          if [ -n "$EXISTING_SHA" ]; then
+            gh api --method PUT "repos/$GITHUB_REPOSITORY/contents/$DEST" -f message='QA: refresh liquidation context probe result' -f content="$CONTENT" -f sha="$EXISTING_SHA" >/dev/null
+          else
+            gh api --method PUT "repos/$GITHUB_REPOSITORY/contents/$DEST" -f message='QA: record liquidation context probe result' -f content="$CONTENT" >/dev/null
+          fi
