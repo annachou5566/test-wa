@@ -3,7 +3,7 @@ name: Lighter source probe
 on:
   pull_request:
     paths:
-      - 'scripts/lighter_source_probe.py'
+      - 'scripts/lighter_ws_trade_probe.mjs'
       - '.github/workflows/lighter-source-probe.yml'
 
 permissions:
@@ -15,5 +15,5 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - name: Probe official public Lighter transaction API
-        run: python3 scripts/lighter_source_probe.py
+      - name: Probe official Lighter active-perp trade websocket
+        run: node scripts/lighter_ws_trade_probe.mjs
