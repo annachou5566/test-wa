@@ -3,7 +3,7 @@ name: Lighter source probe
 on:
   pull_request:
     paths:
-      - 'scripts/lighter_liquidation_semantics_probe.py'
+      - 'scripts/lighter_ws_trade_probe.mjs'
       - '.github/workflows/lighter-source-probe.yml'
 
 permissions:
@@ -12,8 +12,8 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 6
     steps:
       - uses: actions/checkout@v4
-      - name: Probe official Lighter liquidation trade semantics
-        run: python3 scripts/lighter_liquidation_semantics_probe.py
+      - name: Soak official Lighter all-perp trade websocket
+        run: node scripts/lighter_ws_trade_probe.mjs
