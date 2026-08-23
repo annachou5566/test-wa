@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 """Bounded public-safe probe for Lighter Trade(type=deleverage).
 
-Uses only official first-party REST surfaces. It resolves the public liquidity-pool
-index from systemConfig, then queries /api/v1/trades with server-side
-`type=deleverage` both globally and for the public pool. Output contains only
-aggregate counts/schema/role diagnostics. It never emits account ids, tx hashes,
-trade ids, raw rows, credentials, or proprietary Wave Alpha data.
+New hypothesis: official /api/v1/trades is market/account scoped, so a request
+without either scope can return 400 even though deleverage trades are exposed.
+This probe resolves active perp markets from orderBooks and queries a small paced
+set by market_id with server-side type=deleverage, stopping after enough positive
+evidence. Output is aggregate-only: no account ids, tx hashes, trade ids or raw
+rows are emitted or persisted.
 """
 from __future__ import annotations
 
 import json
 import math
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -18,8 +20,12 @@ from collections import Counter
 
 BASE = "https://mainnet.zklighter.elliot.ai"
 TIMEOUT = 15
-UA = "WaveAlpha-QA-Lighter-Deleverage-Trade/1.0"
-LIMIT = 100
+UA = "WaveAlpha-QA-Lighter-Deleverage-Trade/2.0"
+LIMIT = 20
+MAX_MARKETS = 24
+POSITIVE_MARKET_TARGET = 3
+PACE_SECONDS = 1.1
+EXPECTED_TYPE = "deleverage"
 
 
 def get_json(path: str, params=None):
@@ -60,7 +66,26 @@ def sign_name(value):
     return "zero"
 
 
-def summarize(payload, pool_index=None):
+def active_perps(payload):
+    rows = payload.get("order_books") if isinstance(payload, dict) else None
+    if not isinstance(rows, list):
+        return None
+    out = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        if str(row.get("market_type") or "").lower() != "perp":
+            continue
+        if str(row.get("status") or "").lower() != "active":
+            continue
+        market_id = row.get("market_id")
+        if isinstance(market_id, bool) or not isinstance(market_id, int) or market_id < 0:
+            continue
+        out.append(market_id)
+    return sorted(set(out))
+
+
+def summarize_rows(payload):
     rows = payload.get("trades") if isinstance(payload, dict) else None
     if not isinstance(rows, list):
         return None
@@ -69,13 +94,11 @@ def summarize(payload, pool_index=None):
     maker_ask_counts = Counter()
     taker_before_signs = Counter()
     maker_before_signs = Counter()
-    pool_roles = Counter()
-    fields_present = Counter()
-    market_ids = set()
+    field_presence = Counter()
+    side_candidates = Counter()
     timestamps = []
     malformed = 0
     inconsistent_type = 0
-    side_candidate_counts = Counter()
 
     for row in rows:
         if not isinstance(row, dict):
@@ -83,7 +106,7 @@ def summarize(payload, pool_index=None):
             continue
         row_type = str(row.get("type") or "")
         type_counts[row_type] += 1
-        if row_type != "deleverage":
+        if row_type != EXPECTED_TYPE:
             inconsistent_type += 1
 
         market_id = row.get("market_id")
@@ -99,117 +122,122 @@ def summarize(payload, pool_index=None):
             malformed += 1
             continue
 
-        market_ids.add(market_id)
         timestamps.append(timestamp)
         maker_ask = row.get("is_maker_ask")
         maker_key = "true" if maker_ask is True else "false" if maker_ask is False else "other"
         maker_ask_counts[maker_key] += 1
-
         taker_sign = sign_name(row.get("taker_position_size_before"))
         maker_sign = sign_name(row.get("maker_position_size_before"))
         taker_before_signs[taker_sign] += 1
         maker_before_signs[maker_sign] += 1
 
-        # Protocol source applies INTERNAL_DELEVERAGE with bankrupt account as taker.
-        # Candidate liquidated side can therefore be checked without logging identities.
+        # Official INTERNAL_DELEVERAGE circuit applies bankrupt account as taker.
         if maker_ask is False and taker_sign == "positive":
-            side_candidate_counts["long"] += 1
+            side_candidates["long"] += 1
         elif maker_ask is True and taker_sign == "negative":
-            side_candidate_counts["short"] += 1
+            side_candidates["short"] += 1
         else:
-            side_candidate_counts["unresolved"] += 1
+            side_candidates["unresolved"] += 1
 
         for key in (
-            "trade_id", "trade_id_str", "tx_hash", "market_id", "size", "price", "usd_amount",
-            "ask_id", "bid_id", "ask_account_id", "bid_account_id", "is_maker_ask", "block_height",
+            "market_id", "size", "price", "usd_amount", "is_maker_ask", "block_height",
             "timestamp", "taker_position_size_before", "maker_position_size_before", "transaction_time",
         ):
             if key in row and row.get(key) not in (None, ""):
-                fields_present[key] += 1
-
-        if isinstance(pool_index, int):
-            ask_id = row.get("ask_account_id")
-            bid_id = row.get("bid_account_id")
-            if ask_id == pool_index:
-                pool_roles["ask"] += 1
-            if bid_id == pool_index:
-                pool_roles["bid"] += 1
-            if ask_id != pool_index and bid_id != pool_index:
-                pool_roles["neither"] += 1
+                field_presence[key] += 1
 
     return {
         "row_count": len(rows),
         "type_counts": dict(sorted(type_counts.items())),
-        "market_count": len(market_ids),
         "timestamp_range": [min(timestamps), max(timestamps)] if timestamps else None,
         "is_maker_ask_counts": dict(sorted(maker_ask_counts.items())),
         "taker_position_size_before_signs": dict(sorted(taker_before_signs.items())),
         "maker_position_size_before_signs": dict(sorted(maker_before_signs.items())),
-        "candidate_liquidated_side_counts": dict(sorted(side_candidate_counts.items())),
-        "public_pool_role_counts": dict(sorted(pool_roles.items())),
-        "field_presence_counts": dict(sorted(fields_present.items())),
+        "candidate_liquidated_side_counts": dict(sorted(side_candidates.items())),
+        "field_presence_counts": dict(sorted(field_presence.items())),
         "malformed_rows": malformed,
         "unexpected_non_deleverage_rows": inconsistent_type,
         "next_cursor_present": bool(payload.get("next_cursor")),
     }
 
 
-def query_deleverage(account_index=None):
-    params = {
+def query_market(market_id):
+    return get_json("/api/v1/trades", {
+        "market_id": market_id,
         "market_type": "perp",
         "sort_by": "timestamp",
         "sort_dir": "desc",
-        "type": "deleverage",
+        "type": EXPECTED_TYPE,
         "limit": LIMIT,
-    }
-    if account_index is not None:
-        params["account_index"] = account_index
-    return get_json("/api/v1/trades", params)
+    })
 
 
 def main():
-    config_http, config, config_bytes = get_json("/api/v1/systemConfig")
-    pool_index = config.get("liquidity_pool_index") if isinstance(config, dict) else None
+    meta_http, meta, meta_bytes = get_json("/api/v1/orderBooks")
+    markets = active_perps(meta)
     output = {
-        "probe": "lighter-deleverage-trade-v1",
-        "system_config_http": config_http,
-        "system_config_bytes": config_bytes,
-        "liquidity_pool_index_present": isinstance(pool_index, int) and not isinstance(pool_index, bool),
-        "global_query": None,
-        "public_pool_query": None,
+        "probe": "lighter-deleverage-by-market-v1",
+        "expected_type": EXPECTED_TYPE,
+        "order_books_http": meta_http,
+        "order_books_response_bytes": meta_bytes,
+        "active_perp_count": len(markets) if isinstance(markets, list) else None,
+        "max_markets": MAX_MARKETS,
+        "positive_market_target": POSITIVE_MARKET_TARGET,
+        "market_reads": [],
+        "markets_attempted": 0,
+        "positive_markets": 0,
+        "deleverage_rows_observed": 0,
+        "aggregate_side_candidates": {},
         "raw_trades_persisted": False,
         "account_ids_logged": False,
         "transaction_hashes_logged": False,
+        "trade_ids_logged": False,
         "credentials_used": False,
     }
-    if config_http != 200 or not isinstance(pool_index, int) or isinstance(pool_index, bool):
+    if meta_http != 200 or not isinstance(markets, list) or not markets:
         print(json.dumps(output, indent=2, sort_keys=True))
         raise SystemExit(2)
 
-    global_http, global_payload, global_bytes = query_deleverage()
-    output["global_query"] = {
-        "http": global_http,
-        "response_bytes": global_bytes,
-        "summary": summarize(global_payload, pool_index),
-    }
+    aggregate_sides = Counter()
+    hard_failure = False
+    for market_id in markets[:MAX_MARKETS]:
+        http, payload, size = query_market(market_id)
+        summary = summarize_rows(payload)
+        entry = {
+            "market_id": market_id,
+            "http": http,
+            "response_bytes": size,
+            "summary": summary,
+        }
+        if isinstance(payload, dict) and summary is None:
+            entry["code"] = payload.get("code")
+            entry["message"] = str(payload.get("message") or "")[:120]
+        output["market_reads"].append(entry)
+        output["markets_attempted"] += 1
 
-    pool_http, pool_payload, pool_bytes = query_deleverage(pool_index)
-    output["public_pool_query"] = {
-        "http": pool_http,
-        "response_bytes": pool_bytes,
-        "summary": summarize(pool_payload, pool_index),
-    }
+        if http == 200 and isinstance(summary, dict):
+            if summary["malformed_rows"] or summary["unexpected_non_deleverage_rows"]:
+                hard_failure = True
+            if summary["row_count"] > 0:
+                output["positive_markets"] += 1
+                output["deleverage_rows_observed"] += summary["row_count"]
+                aggregate_sides.update(summary["candidate_liquidated_side_counts"])
+                if output["positive_markets"] >= POSITIVE_MARKET_TARGET:
+                    break
+        elif http == 429:
+            # Respect provider boundary; one bounded cooldown then continue.
+            time.sleep(5)
+        elif http not in (200, 400, 403):
+            hard_failure = True
 
+        time.sleep(PACE_SECONDS)
+
+    output["aggregate_side_candidates"] = dict(sorted(aggregate_sides.items()))
     print(json.dumps(output, indent=2, sort_keys=True))
 
-    usable = 0
-    for item in (output["global_query"], output["public_pool_query"]):
-        summary = item.get("summary") if isinstance(item, dict) else None
-        if item.get("http") == 200 and isinstance(summary, dict):
-            usable += 1
-            if summary.get("malformed_rows") or summary.get("unexpected_non_deleverage_rows"):
-                raise SystemExit(3)
-    if usable == 0:
+    if hard_failure:
+        raise SystemExit(3)
+    if not any(item.get("http") == 200 and isinstance(item.get("summary"), dict) for item in output["market_reads"]):
         raise SystemExit(2)
 
 
