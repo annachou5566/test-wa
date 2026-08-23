@@ -1,13 +1,16 @@
 const REST_BASE = 'https://mainnet.zklighter.elliot.ai';
 const WS_URL = 'wss://mainnet.zklighter.elliot.ai/stream?readonly=true';
-const RUN_MS = 60_000;
+const RUN_MS = 70_000;
 const CONNECT_TIMEOUT_MS = 15_000;
 const SHARD_COUNT = 4;
+const SUBSCRIBE_DELAY_MS = 75;
 
 function fail(message) {
-  console.error(JSON.stringify({ probe: 'lighter-ws-trade-v2', error: message }));
+  console.error(JSON.stringify({ probe: 'lighter-ws-trade-v3', error: message }));
   process.exit(2);
 }
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 const response = await fetch(`${REST_BASE}/api/v1/orderBooks`, {
   headers: { Accept: 'application/json', 'User-Agent': 'WaveAlpha-QA-Lighter-WS-Qualification/1.0' },
@@ -27,6 +30,7 @@ const acknowledged = new Set();
 const updated = new Set();
 const liquidationMarkets = new Set();
 const unhandledTypes = new Map();
+const providerErrors = new Map();
 let liquidationCount = 0;
 let ordinaryTradeCount = 0;
 let deleverageCount = 0;
@@ -74,6 +78,12 @@ function inspectTrade(trade, liquidationArray) {
   }
 }
 
+function sanitizedProviderError(message) {
+  const code = message?.code == null ? '' : String(message.code).slice(0, 80);
+  const text = message?.message ?? message?.error ?? message?.msg ?? '';
+  return `${code}|${String(text).slice(0, 160)}`;
+}
+
 const shards = Array.from({ length: SHARD_COUNT }, () => []);
 activePerps.forEach((market, index) => shards[index % SHARD_COUNT].push(market));
 
@@ -88,11 +98,12 @@ function openShard(shardIndex, markets) {
       reject(new Error(`shard ${shardIndex} connect timeout`));
     }, CONNECT_TIMEOUT_MS);
 
-    ws.addEventListener('open', () => {
+    ws.addEventListener('open', async () => {
       opened = true;
       clearTimeout(timer);
       for (const { marketId } of markets) {
         ws.send(JSON.stringify({ type: 'subscribe', channel: `trade/${marketId}` }));
+        await sleep(SUBSCRIBE_DELAY_MS);
       }
     });
 
@@ -119,6 +130,8 @@ function openShard(shardIndex, markets) {
       }
       if (type !== 'connected' && !type.startsWith('subscribed/trade')) {
         unhandledTypes.set(type || '<missing>', (unhandledTypes.get(type || '<missing>') || 0) + 1);
+        const errorKey = sanitizedProviderError(message);
+        if (errorKey !== '|') providerErrors.set(errorKey, (providerErrors.get(errorKey) || 0) + 1);
       }
     });
 
@@ -144,13 +157,14 @@ try {
 
 const missingAcks = [...expected].filter(id => !acknowledged.has(id));
 const summary = {
-  probe: 'lighter-ws-trade-v2',
+  probe: 'lighter-ws-trade-v3',
   rest_order_books_http: response.status,
   active_perp_markets: activePerps.length,
   market_id_min: Math.min(...activePerps.map(item => item.marketId)),
   market_id_max: Math.max(...activePerps.map(item => item.marketId)),
   websocket_url_mode: 'readonly',
   websocket_shards: SHARD_COUNT,
+  subscribe_delay_ms: SUBSCRIBE_DELAY_MS,
   shard_results: shardResults,
   subscribed_trade_markets: acknowledged.size,
   missing_subscription_ack_count: missingAcks.length,
@@ -166,6 +180,7 @@ const summary = {
   ping_frames_seen: pings,
   parse_failures: parseFailures,
   unhandled_type_counts: Object.fromEntries([...unhandledTypes.entries()].sort()),
+  provider_error_counts: Object.fromEntries([...providerErrors.entries()].sort()),
   raw_trades_persisted: false,
   credentials_used: false,
 };
