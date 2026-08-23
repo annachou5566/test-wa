@@ -12,7 +12,7 @@ on:
       - "scripts/asxn_stage2_soak.py"
       - ".github/workflows/asxn-stage2-soak.yml"
   schedule:
-    - cron: "15 1,7,13,19 * * *"
+    - cron: "15 3,7,11,15,19,23 * * *"
 
 permissions:
   contents: read
@@ -24,7 +24,7 @@ concurrency:
 jobs:
   soak:
     runs-on: ubuntu-latest
-    timeout-minutes: 330
+    timeout-minutes: 270
     steps:
       - uses: actions/checkout@v4
 
@@ -56,7 +56,7 @@ jobs:
         if: github.event_name != 'pull_request'
         run: >-
           python scripts/asxn_stage2_soak.py
-          --duration-seconds 18900
+          --duration-seconds 15600
           --state-path .asxn-stage2/state.json
           --output artifacts/asxn-stage2/summary.json
 
