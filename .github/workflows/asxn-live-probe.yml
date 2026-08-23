@@ -1,0 +1,33 @@
+name: ASXN live source probe
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/asxn_live_probe.py'
+      - '.github/workflows/asxn-live-probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install bounded probe dependencies
+        run: python -m pip install --disable-pip-version-check requests playwright
+      - name: Run ASXN direct + browser verification probe
+        run: python scripts/asxn_live_probe.py
+      - name: Upload sanitized one-shot evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: asxn-live-summary
+          path: artifacts/asxn-live/summary.json
+          retention-days: 1
+          if-no-files-found: warn
