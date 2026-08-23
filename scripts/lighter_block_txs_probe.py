@@ -90,12 +90,14 @@ def main():
     height_http, height_payload, height_bytes = get_json("/api/v1/currentHeight")
     height = height_payload.get("height") if isinstance(height_payload, dict) else None
     output = {
-        "probe": "lighter-block-txs-v1",
+        "probe": "lighter-block-txs-v2",
         "current_height_http": height_http,
         "current_height_response_bytes": height_bytes,
         "height_present": isinstance(height, int) and not isinstance(height, bool) and height >= 0,
         "max_blocks": MAX_BLOCKS,
         "block_reads": [],
+        "block_surface_usable": False,
+        "usable_block_reads": 0,
         "type23_found": False,
         "raw_transactions_persisted": False,
         "account_ids_logged": False,
@@ -133,6 +135,8 @@ def main():
         if output["type23_found"]:
             break
 
+    output["usable_block_reads"] = usable_reads
+    output["block_surface_usable"] = usable_reads > 0
     print(json.dumps(output, indent=2, sort_keys=True))
     # Access denial/shape drift is evidence. No bypass and no unbounded scan.
     if usable_reads == 0 or hard_schema_failures:
