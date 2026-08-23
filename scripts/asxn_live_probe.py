@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
 import tempfile
-import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
@@ -13,6 +14,25 @@ from playwright.sync_api import sync_playwright
 HOME = "https://hyperscreener.asxn.xyz/"
 EVENTS = "https://api-hyperliquid.asxn.xyz/api/node/liquidations"
 DAILY = "https://api-hyperliquid.asxn.xyz/api/node/liquidations/chart/daily?timeframe=all"
+DAILY_NUMERIC_FIELDS = (
+    "long_liquidations",
+    "short_liquidations",
+    "long_unique_addresses",
+    "short_unique_addresses",
+    "long_notional",
+    "short_notional",
+)
+EVENT_UID_FIELDS = (
+    "timestamp_utc",
+    "txn_hash",
+    "address",
+    "counterparty",
+    "symbol",
+    "direction",
+    "size",
+    "price",
+    "notional_volume",
+)
 
 
 def compact_body(text: str, limit: int = 240) -> str:
@@ -34,29 +54,93 @@ def direct_probe(url: str) -> dict:
         return {"url": url, "error": type(exc).__name__}
 
 
-def summarize_payload(payload):
-    if isinstance(payload, list):
-        result = {"type": "list", "count": len(payload)}
-        if payload:
-            first = payload[0]
-            last = payload[-1]
-            if isinstance(first, dict):
-                result["first_keys"] = sorted(first.keys())
-                result["first_date"] = first.get("date")
-                result["first_timestamp_utc"] = first.get("timestamp_utc")
-                result["first_direction"] = first.get("direction")
-            if isinstance(last, dict):
-                result["last_keys"] = sorted(last.keys())
-                result["last_date"] = last.get("date")
-                result["last_timestamp_utc"] = last.get("timestamp_utc")
-                result["last_direction"] = last.get("direction")
+def parse_iso(value: object) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def canonical_hash(value: object) -> str:
+    raw = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def event_uid(event: dict) -> str:
+    raw = "\x1f".join(str(event.get(k, "")) for k in EVENT_UID_FIELDS)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def summarize_daily(rows: list) -> dict:
+    result = {"type": "list", "count": len(rows)}
+    dict_rows = [r for r in rows if isinstance(r, dict)]
+    result["dict_rows"] = len(dict_rows)
+    if not dict_rows:
         return result
+
+    dates = [parse_iso(r.get("date")) for r in dict_rows]
+    valid_dates = [d for d in dates if d is not None]
+    result["first_date"] = dict_rows[0].get("date")
+    result["last_date"] = dict_rows[-1].get("date")
+    result["keys"] = sorted(dict_rows[0].keys())
+    result["field_types_first"] = {k: type(dict_rows[0].get(k)).__name__ for k in result["keys"]}
+    result["ascending_by_date"] = bool(valid_dates) and all(a <= b for a, b in zip(valid_dates, valid_dates[1:]))
+    date_strings = [d.date().isoformat() for d in valid_dates]
+    result["duplicate_date_count"] = len(date_strings) - len(set(date_strings))
+    missing = 0
+    if len(valid_dates) >= 2:
+        for a, b in zip(valid_dates, valid_dates[1:]):
+            delta = (b.date() - a.date()).days
+            if delta > 1:
+                missing += delta - 1
+    result["missing_date_count"] = missing
+    latest = dict_rows[-1]
+    result["latest_row"] = {"date": latest.get("date")}
+    for field in DAILY_NUMERIC_FIELDS:
+        result["latest_row"][field] = latest.get(field)
+    result["latest_row_hash"] = canonical_hash(latest)
+    result["last_3_row_hashes"] = [canonical_hash(r) for r in dict_rows[-3:]]
+    return result
+
+
+def summarize_events(rows: list) -> dict:
+    result = {"type": "list", "count": len(rows)}
+    dict_rows = [r for r in rows if isinstance(r, dict)]
+    result["dict_rows"] = len(dict_rows)
+    if not dict_rows:
+        return result
+
+    times = [parse_iso(r.get("timestamp_utc")) for r in dict_rows]
+    valid_times = [t for t in times if t is not None]
+    result["keys"] = sorted(dict_rows[0].keys())
+    result["field_types_first"] = {k: type(dict_rows[0].get(k)).__name__ for k in result["keys"]}
+    result["newest_first"] = len(valid_times) == len(dict_rows) and all(a >= b for a, b in zip(valid_times, valid_times[1:]))
+    result["first_timestamp_utc"] = dict_rows[0].get("timestamp_utc")
+    result["last_timestamp_utc"] = dict_rows[-1].get("timestamp_utc")
+    if len(valid_times) >= 2:
+        result["window_span_seconds"] = round((valid_times[0] - valid_times[-1]).total_seconds(), 6)
+    result["directions"] = sorted({str(r.get("direction")) for r in dict_rows})
+    result["unique_symbols"] = len({str(r.get("symbol")) for r in dict_rows})
+    result["unique_txn_hashes"] = len({str(r.get("txn_hash")) for r in dict_rows})
+    fingerprints = [event_uid(r) for r in dict_rows]
+    result["unique_event_fingerprints"] = len(set(fingerprints))
+    result["event_fingerprints"] = fingerprints
+    return result
+
+
+def summarize_payload(payload, kind: str):
+    if isinstance(payload, list):
+        return summarize_daily(payload) if kind == "daily" else summarize_events(payload)
     if isinstance(payload, dict):
         return {"type": "object", "keys": sorted(payload.keys())}
     return {"type": type(payload).__name__}
 
 
-def browser_fetch(page, url: str) -> dict:
+def browser_fetch(page, url: str, kind: str) -> dict:
     try:
         result = page.evaluate(
             """async (url) => {
@@ -88,16 +172,16 @@ def browser_fetch(page, url: str) -> dict:
         out["body_prefix"] = compact_body(text)
         return out
     try:
-        out["payload"] = summarize_payload(json.loads(text))
-    except Exception:
-        out["parse"] = "non-json"
+        out["payload"] = summarize_payload(json.loads(text), kind)
+    except Exception as exc:
+        out["parse"] = type(exc).__name__
         out["body_prefix"] = compact_body(text)
     return out
 
 
 def main() -> None:
     summary = {
-        "probe": "asxn-live-stage0-stage1-bounded",
+        "probe": "asxn-live-stage0-stage1-bounded-v2",
         "direct": [direct_probe(HOME), direct_probe(EVENTS), direct_probe(DAILY)],
         "browser": {},
     }
@@ -131,12 +215,12 @@ def main() -> None:
             page.goto(HOME, wait_until="domcontentloaded", timeout=45000)
             page.wait_for_timeout(15000)
             summary["browser"]["title"] = page.title()[:120]
-            summary["browser"]["observed_verification_network"] = observed[-40:]
-            summary["browser"]["events"] = browser_fetch(page, EVENTS)
-            summary["browser"]["daily"] = browser_fetch(page, DAILY)
+            summary["browser"]["observed_verification_network"] = observed[-50:]
+            summary["browser"]["events"] = browser_fetch(page, EVENTS, "events")
+            summary["browser"]["daily"] = browser_fetch(page, DAILY, "daily")
         except Exception as exc:
             summary["browser"]["page_error"] = type(exc).__name__
-            summary["browser"]["observed_verification_network"] = observed[-40:]
+            summary["browser"]["observed_verification_network"] = observed[-50:]
         finally:
             context.close()
             shutil.rmtree(profile, ignore_errors=True)
