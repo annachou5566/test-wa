@@ -3,7 +3,7 @@ name: Lighter source probe
 on:
   pull_request:
     paths:
-      - 'scripts/lighter_liquidation_side_probe.py'
+      - 'scripts/lighter_llp_liquidation_probe.py'
       - '.github/workflows/lighter-source-probe.yml'
 
 permissions:
@@ -15,5 +15,5 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - name: Probe official Lighter liquidation side semantics
-        run: python3 scripts/lighter_liquidation_side_probe.py
+      - name: Probe official Lighter LLP liquidation representation
+        run: python3 scripts/lighter_llp_liquidation_probe.py
