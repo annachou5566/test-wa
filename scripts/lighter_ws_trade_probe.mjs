@@ -1,191 +1,123 @@
 const REST_BASE = 'https://mainnet.zklighter.elliot.ai';
 const WS_URL = 'wss://mainnet.zklighter.elliot.ai/stream?readonly=true';
-const RUN_MS = 70_000;
-const CONNECT_TIMEOUT_MS = 15_000;
-const SHARD_COUNT = 4;
-const SUBSCRIBE_DELAY_MS = 75;
+const EDGE_IDS = new Set([219,220,221,222,223,224,225,226,227,228]);
+const WAIT_MS = 12_000;
 
-function fail(message) {
-  console.error(JSON.stringify({ probe: 'lighter-ws-trade-v3', error: message }));
-  process.exit(2);
-}
-
-const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-
-const response = await fetch(`${REST_BASE}/api/v1/orderBooks`, {
-  headers: { Accept: 'application/json', 'User-Agent': 'WaveAlpha-QA-Lighter-WS-Qualification/1.0' },
-  signal: AbortSignal.timeout(15_000),
-});
-if (!response.ok) fail(`orderBooks HTTP ${response.status}`);
-const metadata = await response.json();
-const books = Array.isArray(metadata?.order_books) ? metadata.order_books : [];
-const activePerps = books
-  .filter(book => book?.market_type === 'perp' && book?.status === 'active' && Number.isInteger(book?.market_id))
-  .map(book => ({ marketId: book.market_id, symbol: String(book.symbol || '') }))
-  .sort((a, b) => a.marketId - b.marketId);
-if (!activePerps.length) fail('no active perpetual markets from official metadata');
-
-const expected = new Set(activePerps.map(item => item.marketId));
-const acknowledged = new Set();
-const updated = new Set();
-const liquidationMarkets = new Set();
-const unhandledTypes = new Map();
-const providerErrors = new Map();
-let liquidationCount = 0;
-let ordinaryTradeCount = 0;
-let deleverageCount = 0;
-let settlementCount = 0;
-let malformedTradeRows = 0;
-let messages = 0;
-let pings = 0;
-let parseFailures = 0;
-
-function marketIdFromChannel(channel) {
-  const match = /^trade[:/](\d+)$/.exec(String(channel || ''));
-  return match ? Number(match[1]) : null;
-}
-
-function inspectTrade(trade, liquidationArray) {
-  if (!trade || typeof trade !== 'object') {
-    malformedTradeRows++;
-    return;
+function safeError(value) {
+  if (value == null) return null;
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value).slice(0, 240);
+  if (Array.isArray(value)) return value.slice(0, 8).map(safeError);
+  if (typeof value === 'object') {
+    const out = {};
+    for (const [key, child] of Object.entries(value).slice(0, 12)) {
+      out[String(key).slice(0, 80)] = safeError(child);
+    }
+    return out;
   }
-  const type = String(trade.type || '').toLowerCase();
-  const marketId = Number(trade.market_id);
-  const size = Number(trade.size);
-  const price = Number(trade.price);
-  const usdAmount = Number(trade.usd_amount);
-  const timestamp = Number(trade.timestamp);
-  const txHash = String(trade.tx_hash || '');
-  if (!Number.isInteger(marketId) || !expected.has(marketId)
-      || !Number.isFinite(size) || size < 0
-      || !Number.isFinite(price) || price < 0
-      || !Number.isFinite(usdAmount) || usdAmount < 0
-      || !Number.isFinite(timestamp) || timestamp < 0
-      || !txHash) {
-    malformedTradeRows++;
-    return;
-  }
-  if (type === 'liquidation' || liquidationArray) {
-    liquidationCount++;
-    liquidationMarkets.add(marketId);
-  } else if (type === 'deleverage') {
-    deleverageCount++;
-  } else if (type === 'market-settlement') {
-    settlementCount++;
-  } else if (type === 'trade') {
-    ordinaryTradeCount++;
-  }
+  return String(value).slice(0, 240);
 }
 
-function sanitizedProviderError(message) {
-  const code = message?.code == null ? '' : String(message.code).slice(0, 80);
-  const text = message?.message ?? message?.error ?? message?.msg ?? '';
-  return `${code}|${String(text).slice(0, 160)}`;
+async function getJson(path) {
+  const response = await fetch(REST_BASE + path, {
+    headers: { Accept: 'application/json', 'User-Agent': 'WaveAlpha-QA-Lighter-Edge-Qualification/1.0' },
+    signal: AbortSignal.timeout(15_000),
+  });
+  let payload = null;
+  try { payload = await response.json(); } catch {}
+  return { http: response.status, payload };
 }
 
-const shards = Array.from({ length: SHARD_COUNT }, () => []);
-activePerps.forEach((market, index) => shards[index % SHARD_COUNT].push(market));
+const metadataRead = await getJson('/api/v1/orderBooks');
+if (metadataRead.http !== 200) throw new Error(`orderBooks HTTP ${metadataRead.http}`);
+const books = Array.isArray(metadataRead.payload?.order_books) ? metadataRead.payload.order_books : [];
+const activePerps = books.filter(book => book?.market_type === 'perp' && book?.status === 'active');
+const edgeMarkets = activePerps
+  .filter(book => EDGE_IDS.has(Number(book.market_id)))
+  .map(book => ({ market_id: Number(book.market_id), symbol: String(book.symbol || ''), created_at: String(book.created_at || '') }))
+  .sort((a, b) => a.market_id - b.market_id);
 
-function openShard(shardIndex, markets) {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(WS_URL);
-    let opened = false;
-    let closeCode = null;
-    let closeReason = '';
-    const timer = setTimeout(() => {
-      try { ws.close(); } catch {}
-      reject(new Error(`shard ${shardIndex} connect timeout`));
-    }, CONNECT_TIMEOUT_MS);
-
-    ws.addEventListener('open', async () => {
-      opened = true;
-      clearTimeout(timer);
-      for (const { marketId } of markets) {
-        ws.send(JSON.stringify({ type: 'subscribe', channel: `trade/${marketId}` }));
-        await sleep(SUBSCRIBE_DELAY_MS);
-      }
-    });
-
-    ws.addEventListener('message', event => {
-      messages++;
-      let message;
-      try { message = JSON.parse(String(event.data)); }
-      catch { parseFailures++; return; }
-      const type = String(message?.type || '');
-      if (type === 'ping') {
-        pings++;
-        ws.send(JSON.stringify({ type: 'pong' }));
-        return;
-      }
-      const marketId = marketIdFromChannel(message?.channel);
-      if ((type === 'subscribed/trade' || type === 'subscribed') && Number.isInteger(marketId)) {
-        acknowledged.add(marketId);
-      }
-      if (type === 'update/trade' && Number.isInteger(marketId)) {
-        updated.add(marketId);
-        for (const trade of Array.isArray(message.trades) ? message.trades : []) inspectTrade(trade, false);
-        for (const trade of Array.isArray(message.liquidation_trades) ? message.liquidation_trades : []) inspectTrade(trade, true);
-        return;
-      }
-      if (type !== 'connected' && !type.startsWith('subscribed/trade')) {
-        unhandledTypes.set(type || '<missing>', (unhandledTypes.get(type || '<missing>') || 0) + 1);
-        const errorKey = sanitizedProviderError(message);
-        if (errorKey !== '|') providerErrors.set(errorKey, (providerErrors.get(errorKey) || 0) + 1);
-      }
-    });
-
-    ws.addEventListener('close', event => {
-      closeCode = event.code;
-      closeReason = String(event.reason || '');
-    });
-    ws.addEventListener('error', () => {});
-
-    setTimeout(() => {
-      try { ws.close(1000, 'probe complete'); } catch {}
-      setTimeout(() => resolve({ shardIndex, markets: markets.length, opened, closeCode, closeReason }), 500);
-    }, RUN_MS);
+const recentReads = [];
+for (const market of edgeMarkets) {
+  const read = await getJson(`/api/v1/recentTrades?market_id=${market.market_id}&limit=5`);
+  const trades = Array.isArray(read.payload?.trades) ? read.payload.trades : null;
+  recentReads.push({
+    market_id: market.market_id,
+    symbol: market.symbol,
+    http: read.http,
+    rows: trades == null ? null : trades.length,
+    types: trades == null ? [] : [...new Set(trades.map(trade => String(trade?.type || '')))].sort(),
+    newest_timestamp: trades?.reduce((max, trade) => Math.max(max, Number(trade?.timestamp) || 0), 0) || null,
   });
 }
 
-let shardResults;
-try {
-  shardResults = await Promise.all(shards.map((markets, index) => openShard(index, markets)));
-} catch (error) {
-  fail(String(error?.message || error));
-}
+const ack = new Set();
+const updates = new Set();
+const errors = [];
+let connected = false;
+let parseFailures = 0;
+let ordinaryTrades = 0;
+let liquidationTrades = 0;
 
-const missingAcks = [...expected].filter(id => !acknowledged.has(id));
-const summary = {
-  probe: 'lighter-ws-trade-v3',
-  rest_order_books_http: response.status,
-  active_perp_markets: activePerps.length,
-  market_id_min: Math.min(...activePerps.map(item => item.marketId)),
-  market_id_max: Math.max(...activePerps.map(item => item.marketId)),
-  websocket_url_mode: 'readonly',
-  websocket_shards: SHARD_COUNT,
-  subscribe_delay_ms: SUBSCRIBE_DELAY_MS,
-  shard_results: shardResults,
-  subscribed_trade_markets: acknowledged.size,
-  missing_subscription_ack_count: missingAcks.length,
-  missing_subscription_ack_market_ids: missingAcks,
-  markets_with_trade_updates: updated.size,
-  liquidation_trade_count: liquidationCount,
-  markets_with_liquidations: liquidationMarkets.size,
-  ordinary_trade_count: ordinaryTradeCount,
-  deleverage_count: deleverageCount,
-  market_settlement_count: settlementCount,
-  malformed_trade_rows: malformedTradeRows,
-  messages_seen: messages,
-  ping_frames_seen: pings,
+await new Promise((resolve, reject) => {
+  const ws = new WebSocket(WS_URL);
+  const connectTimer = setTimeout(() => reject(new Error('WS connect timeout')), 15_000);
+  ws.addEventListener('open', async () => {
+    connected = true;
+    clearTimeout(connectTimer);
+    for (const market of edgeMarkets) {
+      ws.send(JSON.stringify({ type: 'subscribe', channel: `trade/${market.market_id}` }));
+      await new Promise(r => setTimeout(r, 250));
+    }
+  });
+  ws.addEventListener('message', event => {
+    let message;
+    try { message = JSON.parse(String(event.data)); }
+    catch { parseFailures++; return; }
+    if (message?.type === 'ping') {
+      ws.send(JSON.stringify({ type: 'pong' }));
+      return;
+    }
+    const match = /^trade[:/](\d+)$/.exec(String(message?.channel || ''));
+    const marketId = match ? Number(match[1]) : null;
+    if ((message?.type === 'subscribed/trade' || message?.type === 'subscribed') && EDGE_IDS.has(marketId)) ack.add(marketId);
+    if (message?.type === 'update/trade' && EDGE_IDS.has(marketId)) {
+      updates.add(marketId);
+      ordinaryTrades += Array.isArray(message.trades) ? message.trades.length : 0;
+      liquidationTrades += Array.isArray(message.liquidation_trades) ? message.liquidation_trades.length : 0;
+      return;
+    }
+    if (message?.type !== 'connected') {
+      errors.push({
+        type: message?.type == null ? null : String(message.type).slice(0, 120),
+        channel: message?.channel == null ? null : String(message.channel).slice(0, 120),
+        code: safeError(message?.code),
+        error: safeError(message?.error),
+        message: safeError(message?.message),
+      });
+    }
+  });
+  ws.addEventListener('error', () => {});
+  setTimeout(() => {
+    try { ws.close(1000, 'probe complete'); } catch {}
+    setTimeout(resolve, 500);
+  }, WAIT_MS);
+});
+
+console.log(JSON.stringify({
+  probe: 'lighter-edge-markets-v4',
+  order_books_http: metadataRead.http,
+  active_perp_count: activePerps.length,
+  edge_markets: edgeMarkets,
+  recent_trade_reads: recentReads,
+  websocket_connected: connected,
+  websocket_acked_market_ids: [...ack].sort((a,b)=>a-b),
+  websocket_update_market_ids: [...updates].sort((a,b)=>a-b),
+  websocket_ordinary_trade_rows: ordinaryTrades,
+  websocket_liquidation_trade_rows: liquidationTrades,
+  websocket_errors: errors.slice(0, 20),
   parse_failures: parseFailures,
-  unhandled_type_counts: Object.fromEntries([...unhandledTypes.entries()].sort()),
-  provider_error_counts: Object.fromEntries([...providerErrors.entries()].sort()),
   raw_trades_persisted: false,
   credentials_used: false,
-};
-console.log(JSON.stringify(summary, null, 2));
+}, null, 2));
 
-if (shardResults.some(result => !result.opened)) process.exit(2);
-if (acknowledged.size !== activePerps.length) process.exit(3);
-if (malformedTradeRows !== 0 || parseFailures !== 0) process.exit(4);
+if (!connected || parseFailures) process.exit(2);
