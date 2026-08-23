@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Bounded public-safe probe for Lighter LLP/full-liquidation representation.
 
-The probe performs only a handful of first-party public requests. It resolves the
-current liquidity-pool account index from systemConfig and then asks the trades
-endpoint for that public-pool account with liquidation filtering. It logs only
-aggregate role/position-sign patterns; no account ids or raw trades are emitted.
+Performs exactly three first-party public requests: systemConfig, LLP liquidation
+trades, and LLP all-type trades. Output contains aggregate type/role patterns only;
+no account ids or raw trades are emitted or persisted.
 """
 from __future__ import annotations
 
@@ -17,7 +16,7 @@ from decimal import Decimal, InvalidOperation
 
 BASE = "https://mainnet.zklighter.elliot.ai"
 TIMEOUT = 15
-USER_AGENT = "WaveAlpha-QA-Lighter-LLP-Representation/1.0"
+USER_AGENT = "WaveAlpha-QA-Lighter-LLP-Representation/1.1"
 
 
 def get_json(path: str, params: dict | None = None):
@@ -116,7 +115,7 @@ def main():
     config_http, config, config_bytes = get_json("/api/v1/systemConfig")
     pool_index = config.get("liquidity_pool_index") if isinstance(config, dict) else None
     output = {
-        "probe": "lighter-llp-liquidation-representation-v1",
+        "probe": "lighter-llp-liquidation-representation-v2",
         "system_config_http": config_http,
         "system_config_bytes": config_bytes,
         "liquidity_pool_index_present": isinstance(pool_index, int) and not isinstance(pool_index, bool),
@@ -129,15 +128,9 @@ def main():
         print(json.dumps(output, indent=2, sort_keys=True))
         raise SystemExit(2)
 
-    # A small set of documented parameters only. Stop after the first usable
-    # list response so the probe does not multiply provider load.
     queries = [
         ("timestamp-desc-liquidation", {
             "sort_by": "timestamp", "sort_dir": "desc", "limit": 100,
-            "account_index": pool_index, "market_type": "perp", "type": "liquidation",
-        }),
-        ("trade-id-desc-liquidation", {
-            "sort_by": "trade_id", "sort_dir": "desc", "limit": 100,
             "account_index": pool_index, "market_type": "perp", "type": "liquidation",
         }),
         ("timestamp-desc-all-types", {
@@ -145,19 +138,12 @@ def main():
             "account_index": pool_index, "market_type": "perp",
         }),
     ]
-    usable = False
     for label, params in queries:
         status, payload, size = get_json("/api/v1/trades", params)
-        summary = summarize_trade_payload(label, status, payload, size)
-        output["trade_reads"].append(summary)
-        if summary.get("trades_list"):
-            usable = True
-            break
+        output["trade_reads"].append(summarize_trade_payload(label, status, payload, size))
 
     print(json.dumps(output, indent=2, sort_keys=True))
-    # Auth denial or no list is evidence, not a reason to bypass the boundary.
-    # The job exits success once systemConfig worked; interpretation is manual.
-    if config_http != 200:
+    if any(read.get("http") != 200 or not read.get("trades_list") for read in output["trade_reads"]):
         raise SystemExit(2)
 
 
