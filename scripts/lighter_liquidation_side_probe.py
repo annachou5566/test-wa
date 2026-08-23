@@ -2,11 +2,11 @@
 """Bounded public-safe Lighter liquidation side-semantics probe.
 
 Uses only official public orderBooks + recentTrades endpoints. It never persists
-raw trades/account ids. Output contains aggregate counts and market ids only.
+raw trades/account ids. Requests are sequential and deliberately paced; 429 gets
+bounded backoff rather than a burst retry.
 """
 from __future__ import annotations
 
-import concurrent.futures
 import json
 import time
 import urllib.error
@@ -17,9 +17,10 @@ from decimal import Decimal, InvalidOperation
 
 BASE = "https://mainnet.zklighter.elliot.ai"
 TIMEOUT = 12
-WORKERS = 4
 LIMIT = 100
-USER_AGENT = "WaveAlpha-QA-Lighter-Side-Semantics/1.0"
+REQUEST_DELAY_SEC = 0.35
+MAX_429_RETRIES = 2
+USER_AGENT = "WaveAlpha-QA-Lighter-Side-Semantics/1.1"
 
 
 def get_json(path: str, params: dict | None = None):
@@ -63,14 +64,20 @@ def sign(value):
 def fetch_market(market):
     market_id = int(market["market_id"])
     symbol = str(market.get("symbol") or "")
-    status, payload = get_json("/api/v1/recentTrades", {"market_id": market_id, "limit": LIMIT})
+    attempts = 0
+    while True:
+        attempts += 1
+        status, payload = get_json("/api/v1/recentTrades", {"market_id": market_id, "limit": LIMIT})
+        if status != 429 or attempts > MAX_429_RETRIES:
+            break
+        time.sleep(float(attempts))
     trades = payload.get("trades") if isinstance(payload, dict) else None
     liquidation_rows = []
     if isinstance(trades, list):
         for row in trades:
             if isinstance(row, dict) and str(row.get("type") or "").lower() == "liquidation":
                 liquidation_rows.append(row)
-    return market_id, symbol, status, liquidation_rows, isinstance(trades, list)
+    return market_id, symbol, status, liquidation_rows, isinstance(trades, list), attempts
 
 
 def main():
@@ -88,16 +95,12 @@ def main():
     markets.sort(key=lambda row: int(row["market_id"]))
 
     results = []
-    # Small worker count: bounded, public-safe, and avoids bursty provider load.
-    with concurrent.futures.ThreadPoolExecutor(max_workers=WORKERS) as executor:
-        futures = []
-        for market in markets:
-            futures.append(executor.submit(fetch_market, market))
-            time.sleep(0.025)
-        for future in futures:
-            results.append(future.result())
+    for market in markets:
+        results.append(fetch_market(market))
+        time.sleep(REQUEST_DELAY_SEC)
 
     http_counts = Counter()
+    attempt_counts = Counter()
     rows_total = 0
     unique = {}
     duplicate_rows = 0
@@ -107,8 +110,9 @@ def main():
     malformed = 0
     list_payload_markets = 0
 
-    for market_id, _symbol, http, rows, has_list in results:
+    for market_id, _symbol, http, rows, has_list, attempts in results:
         http_counts[str(http)] += 1
+        attempt_counts[str(attempts)] += 1
         if has_list:
             list_payload_markets += 1
         for row in rows:
@@ -125,21 +129,21 @@ def main():
                 continue
             unique[key] = True
             liquidation_market_ids.add(row_market_id)
-            ask_sign = sign(row.get("ask_account_pnl"))
-            bid_sign = sign(row.get("bid_account_pnl"))
-            pnl_patterns[f"ask:{ask_sign}|bid:{bid_sign}"] += 1
-            taker_sign = sign(row.get("taker_position_size_before"))
-            maker_ask = row.get("is_maker_ask")
-            taker_changed = row.get("taker_position_sign_changed")
+            pnl_patterns[f"ask:{sign(row.get('ask_account_pnl'))}|bid:{sign(row.get('bid_account_pnl'))}"] += 1
             taker_patterns[
-                f"takerBefore:{taker_sign}|makerAsk:{maker_ask}|takerSignChanged:{taker_changed}"
+                f"takerBefore:{sign(row.get('taker_position_size_before'))}|"
+                f"makerAsk:{row.get('is_maker_ask')}|"
+                f"takerSignChanged:{row.get('taker_position_sign_changed')}"
             ] += 1
 
     summary = {
-        "probe": "lighter-liquidation-side-semantics-v1",
+        "probe": "lighter-liquidation-side-semantics-v2-paced",
         "order_books_http": status,
         "active_perp_markets": len(markets),
+        "request_delay_sec": REQUEST_DELAY_SEC,
+        "max_429_retries": MAX_429_RETRIES,
         "recent_trades_http_counts": dict(sorted(http_counts.items())),
+        "request_attempt_counts": dict(sorted(attempt_counts.items())),
         "markets_with_list_payload": list_payload_markets,
         "recent_trade_limit_per_market": LIMIT,
         "liquidation_rows_seen": rows_total,
@@ -160,8 +164,6 @@ def main():
         raise SystemExit(2)
     if malformed:
         raise SystemExit(3)
-    # Evidence probe succeeds even if no liquidation is in the bounded latest-100 windows;
-    # absence is not interpreted as zero exchange liquidations.
 
 
 if __name__ == "__main__":
