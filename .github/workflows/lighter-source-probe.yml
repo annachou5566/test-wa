@@ -3,7 +3,7 @@ name: Lighter source probe
 on:
   pull_request:
     paths:
-      - 'scripts/lighter_internal_deleverage_probe.py'
+      - 'scripts/lighter_block_txs_probe.py'
       - '.github/workflows/lighter-source-probe.yml'
 
 permissions:
@@ -15,5 +15,5 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - name: Probe official Lighter INTERNAL_DELEVERAGE transaction surface
-        run: python3 scripts/lighter_internal_deleverage_probe.py
+      - name: Probe official Lighter block transaction surface
+        run: python3 scripts/lighter_block_txs_probe.py
