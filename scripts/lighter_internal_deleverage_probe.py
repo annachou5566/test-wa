@@ -53,7 +53,8 @@ def main():
     config_http, config, config_bytes = get_json("/api/v1/systemConfig")
     pool_index = config.get("liquidity_pool_index") if isinstance(config, dict) else None
     output = {
-        "probe": "lighter-internal-deleverage-v1",
+        "probe": "lighter-internal-deleverage-v2",
+        "tx_filter_type": TX_INTERNAL_DELEVERAGE,
         "system_config_http": config_http,
         "system_config_bytes": config_bytes,
         "liquidity_pool_index_present": isinstance(pool_index, int) and not isinstance(pool_index, bool),
@@ -67,6 +68,7 @@ def main():
         "info_key_sets": {},
         "event_info_key_sets": {},
         "malformed_rows": 0,
+        "unexpected_type_rows": 0,
         "raw_transactions_persisted": False,
         "account_ids_logged": False,
         "credentials_used": False,
@@ -94,6 +96,7 @@ def main():
     info_sets = Counter()
     event_sets = Counter()
     malformed = 0
+    unexpected_types = 0
     if isinstance(txs, list):
         for row in txs:
             if not isinstance(row, dict):
@@ -104,6 +107,8 @@ def main():
                 malformed += 1
                 continue
             type_counts[str(tx_type)] += 1
+            if tx_type != TX_INTERNAL_DELEVERAGE:
+                unexpected_types += 1
             info = parse_json_string(row.get("info"))
             event = parse_json_string(row.get("event_info"))
             if info is not None:
@@ -116,10 +121,11 @@ def main():
     output["info_key_sets"] = dict(sorted(info_sets.items()))
     output["event_info_key_sets"] = dict(sorted(event_sets.items()))
     output["malformed_rows"] = malformed
+    output["unexpected_type_rows"] = unexpected_types
     print(json.dumps(output, indent=2, sort_keys=True))
 
-    # Auth rejection/unsupported by-mode is evidence; never bypass it.
-    if http != 200 or not isinstance(txs, list) or malformed:
+    # Auth rejection/unsupported by-mode/schema drift is evidence; never bypass it.
+    if http != 200 or not isinstance(txs, list) or malformed or unexpected_types:
         raise SystemExit(2)
 
 
