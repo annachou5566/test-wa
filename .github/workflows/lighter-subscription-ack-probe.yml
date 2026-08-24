@@ -1,0 +1,93 @@
+name: Lighter subscription ack probe
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/lighter-subscription-ack-probe.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install bounded dependency
+        run: python3 -m pip install --disable-pip-version-check 'websockets==15.0.1'
+      - name: Observe subscription response types only
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import asyncio, json, urllib.request
+          from collections import Counter
+          import websockets
+
+          HTTP='https://mainnet.zklighter.elliot.ai'
+          WS='wss://mainnet.zklighter.elliot.ai/stream?readonly=true'
+          SHARDS=4
+          OBSERVE=45
+
+          req=urllib.request.Request(HTTP+'/api/v1/orderBooks',headers={'Accept':'application/json','User-Agent':'WaveAlpha-QA-Lighter-Ack/1.0'})
+          with urllib.request.urlopen(req,timeout=15) as resp:
+              payload=json.loads(resp.read().decode('utf-8'))
+          markets=sorted({row['market_id'] for row in payload.get('order_books',[]) if isinstance(row,dict) and row.get('market_type')=='perp' and row.get('status')=='active' and isinstance(row.get('market_id'),int)})
+          shards=[[] for _ in range(SHARDS)]
+          for i,mid in enumerate(markets): shards[i%SHARDS].append(mid)
+
+          types=Counter()
+          confirmation_markets=set()
+          sent=0
+          errors=Counter()
+          lock=asyncio.Lock()
+
+          async def worker(ids):
+              nonlocal_sent={'n':0}
+              try:
+                  async with websockets.connect(WS,ping_interval=20,ping_timeout=20,close_timeout=5,max_size=2*1024*1024,compression=None,open_timeout=15) as ws:
+                      for mid in ids:
+                          await ws.send(json.dumps({'type':'subscribe','channel':f'trade/{mid}'},separators=(',',':')))
+                          nonlocal_sent['n']+=1
+                          await asyncio.sleep(.03)
+                      deadline=asyncio.get_running_loop().time()+OBSERVE
+                      while asyncio.get_running_loop().time()<deadline:
+                          try:
+                              raw=await asyncio.wait_for(ws.recv(),timeout=min(3,max(.1,deadline-asyncio.get_running_loop().time())))
+                          except asyncio.TimeoutError:
+                              continue
+                          try: msg=json.loads(raw)
+                          except Exception:
+                              types['json_decode_error']+=1
+                              continue
+                          kind=str(msg.get('type') or 'missing')
+                          types[kind]+=1
+                          channel=str(msg.get('channel') or '')
+                          if kind.startswith('subscribed/') and channel.startswith('trade:'):
+                              try: confirmation_markets.add(int(channel.rsplit(':',1)[1]))
+                              except Exception: pass
+              except Exception as exc:
+                  errors[type(exc).__name__]+=1
+              async with lock:
+                  global sent
+                  sent+=nonlocal_sent['n']
+
+          async def main():
+              await asyncio.gather(*(worker(ids) for ids in shards))
+          asyncio.run(main())
+
+          out={
+              'probe':'lighter-trade-subscription-confirmation-v1',
+              'active_perp_count':len(markets),
+              'subscription_messages_sent':sent,
+              'message_type_counts':dict(sorted(types.items())),
+              'confirmed_trade_market_count':len(confirmation_markets),
+              'all_active_trade_markets_confirmed':set(markets)==confirmation_markets,
+              'connection_error_counts':dict(sorted(errors.items())),
+              'raw_rows_persisted':False,
+              'credentials_used':False,
+          }
+          print(json.dumps(out,indent=2,sort_keys=True))
+          if len(markets)!=212 or sent!=212 or errors: raise SystemExit(3)
+          PY
