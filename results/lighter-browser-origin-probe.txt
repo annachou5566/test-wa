@@ -2,11 +2,9 @@ node:internal/modules/run_main:123
     triggerUncaughtException(
     ^
 
-page.evaluate: TypeError: Failed to fetch
-    at eval (eval at evaluate (:291:30), <anonymous>:8:28)
-    at UtilityScript.evaluate (<anonymous>:293:16)
-    at UtilityScript.<anonymous> (<anonymous>:1:44)
-    at /home/runner/work/test-wa/test-wa/scripts/lighter-browser-origin-probe.mjs:17:29
+page.evaluate: Error: websocket error shard 1
+    at socket.onerror (eval at evaluate (:291:30), <anonymous>:19:41)
+    at /home/runner/work/test-wa/test-wa/scripts/lighter-browser-origin-probe.mjs:28:29
 
 Node.js v20.20.2
 exitCode=1
