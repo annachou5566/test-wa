@@ -3,15 +3,10 @@ node:internal/modules/run_main:123
     ^
 
 page.evaluate: TypeError: Failed to fetch
-    at window.fetch (https://wave-alpha.pages.dev/public/js/chart-engine.js?v=1015:2300:26)
-    at waveSecurityFetch (https://wave-alpha.pages.dev/public/js/wave-security.js?v=1:156:65)
-    at metadataAwareFetch (https://wave-alpha.pages.dev/public/js/liquidation/gate-metadata-fallback.js?v=2:44:24)
-    at resilientFetch (https://wave-alpha.pages.dev/public/js/liquidation/tab/api-resilience.js?v=5:451:26)
-    at liquidationContextFetch (https://wave-alpha.pages.dev/public/js/liquidation/tab/context-store.js?v=1:426:96)
-    at eval (eval at evaluate (:291:30), <anonymous>:2:28)
+    at eval (eval at evaluate (:291:30), <anonymous>:8:28)
     at UtilityScript.evaluate (<anonymous>:293:16)
     at UtilityScript.<anonymous> (<anonymous>:1:44)
-    at /home/runner/work/test-wa/test-wa/scripts/lighter-browser-origin-probe.mjs:13:29
+    at /home/runner/work/test-wa/test-wa/scripts/lighter-browser-origin-probe.mjs:17:29
 
 Node.js v20.20.2
 exitCode=1
