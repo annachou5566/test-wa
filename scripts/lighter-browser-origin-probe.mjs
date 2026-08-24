@@ -6,37 +6,34 @@ const WS_URL = 'wss://mainnet.zklighter.elliot.ai/stream?readonly=true';
 const SHARDS = 4;
 const TIMEOUT_MS = 45_000;
 
+const metadataResponse = await fetch(API_URL, { headers: { Accept: 'application/json' } });
+if (!metadataResponse.ok) throw new Error(`server metadata HTTP ${metadataResponse.status}`);
+const metadata = await metadataResponse.json();
+const activeMarketIds = [...new Set(
+  (Array.isArray(metadata?.order_books) ? metadata.order_books : [])
+    .filter(row => String(row?.market_type || '').toLowerCase() === 'perp'
+      && String(row?.status || '').toLowerCase() === 'active'
+      && Number.isInteger(Number(row?.market_id)))
+    .map(row => Number(row.market_id)),
+)].sort((a, b) => a - b);
+if (!activeMarketIds.length) throw new Error('server metadata returned no active perpetual markets');
+
 const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage();
   await page.addInitScript(() => {
-    globalThis.__waProbeNativeFetch = globalThis.fetch.bind(globalThis);
     globalThis.__waProbeNativeWebSocket = globalThis.WebSocket;
   });
   await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
-  const result = await page.evaluate(async ({ API_URL, WS_URL, SHARDS, TIMEOUT_MS }) => {
-    const nativeFetch = globalThis.__waProbeNativeFetch;
+  const result = await page.evaluate(async ({ WS_URL, SHARDS, TIMEOUT_MS, activeMarketIds }) => {
     const NativeWebSocket = globalThis.__waProbeNativeWebSocket;
-    if (typeof nativeFetch !== 'function' || typeof NativeWebSocket !== 'function') {
-      throw new Error('native browser primitives unavailable');
-    }
-
-    const response = await nativeFetch(API_URL, { cache: 'no-store', headers: { Accept: 'application/json' } });
-    if (!response.ok) throw new Error(`metadata HTTP ${response.status}`);
-    const payload = await response.json();
-    const markets = (Array.isArray(payload?.order_books) ? payload.order_books : [])
-      .filter(row => String(row?.market_type || '').toLowerCase() === 'perp'
-        && String(row?.status || '').toLowerCase() === 'active'
-        && Number.isInteger(Number(row?.market_id)))
-      .map(row => Number(row.market_id))
-      .sort((a, b) => a - b);
-    const unique = [...new Set(markets)];
-    if (!unique.length) throw new Error('no active perpetual markets');
+    if (typeof NativeWebSocket !== 'function') throw new Error('native WebSocket unavailable');
 
     const shards = Array.from({ length: SHARDS }, () => []);
-    unique.forEach((marketId, index) => shards[index % SHARDS].push(marketId));
+    activeMarketIds.forEach((marketId, index) => shards[index % SHARDS].push(marketId));
     const confirmed = new Set();
     const sockets = [];
+    let openedSockets = 0;
     let updateTradeMessages = 0;
 
     try {
@@ -51,6 +48,7 @@ try {
             if (shardConfirmed.size !== expected.size) reject(new Error(`websocket closed ${event.code} shard ${shardIndex + 1}`));
           };
           socket.onopen = async () => {
+            openedSockets++;
             for (const marketId of marketIds) {
               socket.send(JSON.stringify({ type: 'subscribe', channel: `trade/${marketId}` }));
               await new Promise(done => setTimeout(done, 30));
@@ -81,19 +79,21 @@ try {
 
     return {
       pageOrigin: location.origin,
-      metadataHttp: response.status,
-      activePerpMarkets: unique.length,
+      serverMetadataHttp: 200,
+      activePerpMarkets: activeMarketIds.length,
       sockets: sockets.length,
+      openedSockets,
       confirmedMarkets: confirmed.size,
       updateTradeMessages,
       credentialsUsed: false,
       rawRowsPersisted: false,
     };
-  }, { API_URL, WS_URL, SHARDS, TIMEOUT_MS });
+  }, { WS_URL, SHARDS, TIMEOUT_MS, activeMarketIds });
 
   console.log(JSON.stringify(result, null, 2));
-  if (result.metadataHttp !== 200 || result.activePerpMarkets <= 0
-    || result.sockets !== SHARDS || result.confirmedMarkets !== result.activePerpMarkets) {
+  if (result.serverMetadataHttp !== 200 || result.activePerpMarkets <= 0
+    || result.sockets !== SHARDS || result.openedSockets !== SHARDS
+    || result.confirmedMarkets !== result.activePerpMarkets) {
     throw new Error('LIGHTER_BROWSER_ORIGIN_PROBE=FAIL');
   }
   console.log('LIGHTER_BROWSER_ORIGIN_PROBE=PASS');
