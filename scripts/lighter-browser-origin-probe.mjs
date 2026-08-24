@@ -9,9 +9,19 @@ const TIMEOUT_MS = 45_000;
 const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage();
+  await page.addInitScript(() => {
+    globalThis.__waProbeNativeFetch = globalThis.fetch.bind(globalThis);
+    globalThis.__waProbeNativeWebSocket = globalThis.WebSocket;
+  });
   await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded', timeout: 30_000 });
   const result = await page.evaluate(async ({ API_URL, WS_URL, SHARDS, TIMEOUT_MS }) => {
-    const response = await fetch(API_URL, { cache: 'no-store', headers: { Accept: 'application/json' } });
+    const nativeFetch = globalThis.__waProbeNativeFetch;
+    const NativeWebSocket = globalThis.__waProbeNativeWebSocket;
+    if (typeof nativeFetch !== 'function' || typeof NativeWebSocket !== 'function') {
+      throw new Error('native browser primitives unavailable');
+    }
+
+    const response = await nativeFetch(API_URL, { cache: 'no-store', headers: { Accept: 'application/json' } });
     if (!response.ok) throw new Error(`metadata HTTP ${response.status}`);
     const payload = await response.json();
     const markets = (Array.isArray(payload?.order_books) ? payload.order_books : [])
@@ -34,7 +44,7 @@ try {
         Promise.all(shards.map((marketIds, shardIndex) => new Promise((resolve, reject) => {
           const expected = new Set(marketIds);
           const shardConfirmed = new Set();
-          const socket = new WebSocket(WS_URL);
+          const socket = new NativeWebSocket(WS_URL);
           sockets.push(socket);
           socket.onerror = () => reject(new Error(`websocket error shard ${shardIndex + 1}`));
           socket.onclose = event => {
