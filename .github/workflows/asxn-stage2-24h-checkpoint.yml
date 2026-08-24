@@ -1,0 +1,111 @@
+name: ASXN Stage2 24h checkpoint
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/asxn-stage2-24h-checkpoint.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  checkpoint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install bounded probe dependencies
+        run: python -m pip install --disable-pip-version-check requests playwright psutil
+
+      - name: Restore latest sanitized Stage2 state read-only
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .asxn-stage2
+          key: asxn-stage2-checkpoint-readonly-${{ github.run_id }}
+          restore-keys: |
+            asxn-stage2-
+
+      - name: Run 120s checkpoint bridge without mutating campaign cache
+        run: |
+          set -Eeuo pipefail
+          test -f .asxn-stage2/state.json
+          cp .asxn-stage2/state.json /tmp/asxn-stage2-checkpoint-state.json
+          python scripts/asxn_stage2_soak.py \
+            --duration-seconds 120 \
+            --state-path /tmp/asxn-stage2-checkpoint-state.json \
+            --output checkpoint-summary.json
+
+      - name: Derive exact 24h checkpoint verdict inputs
+        run: |
+          set -Eeuo pipefail
+          python - <<'PY'
+          import json
+          from datetime import datetime, timezone
+
+          p = 'checkpoint-summary.json'
+          data = json.load(open(p, encoding='utf-8'))
+          state = data.get('campaign_state') or {}
+          start = datetime.fromisoformat('2026-08-23T07:20:00+00:00')
+          checkpoint = datetime.fromisoformat('2026-08-24T07:20:00+00:00')
+
+          def dt(v):
+              if not v:
+                  return None
+              try:
+                  return datetime.fromisoformat(str(v).replace('Z', '+00:00'))
+              except ValueError:
+                  return None
+
+          covers = False
+          for interval in state.get('coverage_intervals') or []:
+              a = dt(interval.get('start'))
+              b = dt(interval.get('observed_through'))
+              if a and b and a <= start and b >= checkpoint:
+                  covers = True
+                  break
+
+          out = {
+              'probe': 'asxn-stage2-24h-checkpoint-v1',
+              'checkpoint_utc': '2026-08-24T07:20:00Z',
+              'source_summary_status': data.get('status'),
+              'cache_matched_key': '${{ steps.cache.outputs.cache-matched-key }}',
+              'coverage_through_24h_checkpoint': covers,
+              'campaign_poll_success_count': state.get('poll_success_count'),
+              'campaign_poll_403_count': state.get('poll_403_count'),
+              'campaign_poll_429_count': state.get('poll_429_count'),
+              'campaign_reverify_count': state.get('reverify_count'),
+              'campaign_gap_count': state.get('gap_count'),
+              'campaign_gap_dates': state.get('gap_dates'),
+              'provider_revision_count': state.get('provider_revision_count'),
+              'provider_revised_dates': state.get('provider_revised_dates'),
+              'coverage_intervals': state.get('coverage_intervals'),
+              'event_metrics_this_bridge': data.get('event_metrics'),
+              'http_status_counts_this_bridge': data.get('http_status_counts'),
+              'daily_snapshot_this_bridge': data.get('daily_snapshot'),
+              'daily_reconciliation_this_bridge': data.get('daily_reconciliation'),
+              'session_valid_for_at_least_seconds_this_bridge': data.get('session_valid_for_at_least_seconds_this_run'),
+              'verification_this_bridge': data.get('verification'),
+              'resources_this_bridge': data.get('resources'),
+              'raw_events_persisted': data.get('raw_events_persisted'),
+              'credentials_logged': data.get('credentials_logged'),
+          }
+          json.dump(out, open('checkpoint-verdict-inputs.json','w',encoding='utf-8'), indent=2, sort_keys=True)
+          print(json.dumps(out, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload sanitized checkpoint evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: asxn-stage2-24h-checkpoint-${{ github.run_id }}
+          path: |
+            checkpoint-summary.json
+            checkpoint-verdict-inputs.json
+          retention-days: 3
+          if-no-files-found: error
