@@ -1,0 +1,27 @@
+name: Lighter browser origin probe
+
+on:
+  push:
+    paths:
+      - "scripts/lighter-browser-origin-probe.mjs"
+      - ".github/workflows/lighter-browser-origin-probe.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install Playwright
+        run: npm install --no-save playwright@1.55.0
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Probe Lighter from Wave Alpha browser origin
+        run: node scripts/lighter-browser-origin-probe.mjs
