@@ -2,9 +2,10 @@ node:internal/modules/run_main:123
     triggerUncaughtException(
     ^
 
-page.evaluate: Error: websocket error shard 1
-    at socket.onerror (eval at evaluate (:291:30), <anonymous>:19:41)
-    at /home/runner/work/test-wa/test-wa/scripts/lighter-browser-origin-probe.mjs:28:29
+page.evaluate: Execution context was destroyed, most likely because of a navigation
+    at /home/runner/work/test-wa/test-wa/scripts/lighter-browser-origin-probe.mjs:29:29 {
+  name: 'Error'
+}
 
 Node.js v20.20.2
 exitCode=1
