@@ -1,0 +1,120 @@
+name: Lighter resource preflight
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/lighter-resource-preflight.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install bounded dependencies
+        run: python3 -m pip install --disable-pip-version-check 'websockets==15.0.1' psutil
+      - name: Measure full active-perp public WS footprint for 300s
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY' | tee lighter-resource-summary.json
+          import asyncio, json, os, time, urllib.request
+          import psutil, websockets
+
+          HTTP='https://mainnet.zklighter.elliot.ai'
+          WS='wss://mainnet.zklighter.elliot.ai/stream?readonly=true'
+          DURATION=300
+          SHARDS=4
+
+          req=urllib.request.Request(HTTP+'/api/v1/orderBooks', headers={'Accept':'application/json','User-Agent':'WaveAlpha-QA-Lighter-Resource/1.0'})
+          with urllib.request.urlopen(req, timeout=15) as resp:
+              meta=json.loads(resp.read().decode())
+          markets=[]
+          for row in meta.get('order_books') or []:
+              if isinstance(row,dict) and str(row.get('market_type','')).lower()=='perp' and str(row.get('status','')).lower()=='active' and isinstance(row.get('market_id'),int):
+                  markets.append(row['market_id'])
+          markets=sorted(set(markets))
+          shards=[[] for _ in range(SHARDS)]
+          for i,m in enumerate(markets): shards[i%SHARDS].append(m)
+
+          proc=psutil.Process(os.getpid())
+          peak_rss=0
+          peak_children_rss=0
+          peak_threads=0
+          cpu_start=proc.cpu_times()
+          messages=0
+          trade_updates=0
+          connections=0
+          errors={}
+          stop=asyncio.Event()
+          lock=asyncio.Lock()
+
+          async def sample():
+              nonlocal peak_rss, peak_children_rss, peak_threads
+              while not stop.is_set():
+                  try:
+                      rss=proc.memory_info().rss
+                      child=sum(c.memory_info().rss for c in proc.children(recursive=True) if c.is_running())
+                      peak_rss=max(peak_rss,rss)
+                      peak_children_rss=max(peak_children_rss,child)
+                      peak_threads=max(peak_threads,proc.num_threads())
+                  except Exception: pass
+                  await asyncio.sleep(0.5)
+
+          async def worker(ids):
+              nonlocal messages, trade_updates, connections
+              try:
+                  async with websockets.connect(WS,ping_interval=20,ping_timeout=20,close_timeout=5,max_queue=32,max_size=2*1024*1024,compression=None,open_timeout=15) as ws:
+                      connections+=1
+                      for mid in ids:
+                          await ws.send(json.dumps({'type':'subscribe','channel':f'trade/{mid}'},separators=(',',':')))
+                      deadline=time.time()+DURATION
+                      while time.time()<deadline:
+                          try:
+                              raw=await asyncio.wait_for(ws.recv(),timeout=min(5,max(.1,deadline-time.time())))
+                          except asyncio.TimeoutError:
+                              continue
+                          messages+=1
+                          try: p=json.loads(raw)
+                          except Exception: continue
+                          if p.get('type')=='update/trade': trade_updates+=1
+              except Exception as e:
+                  errors[type(e).__name__]=errors.get(type(e).__name__,0)+1
+
+          async def main():
+              sampler=asyncio.create_task(sample())
+              await asyncio.gather(*(worker(s) for s in shards))
+              stop.set(); await sampler
+          asyncio.run(main())
+
+          cpu_end=proc.cpu_times()
+          out={
+              'probe':'lighter-resource-preflight-212-v1',
+              'duration_seconds':DURATION,
+              'active_perp_count':len(markets),
+              'ws_shards':SHARDS,
+              'connections_opened':connections,
+              'messages_received':messages,
+              'trade_update_messages':trade_updates,
+              'connection_errors':errors,
+              'peak_process_rss_bytes':peak_rss,
+              'peak_children_rss_bytes':peak_children_rss,
+              'peak_total_rss_bytes':peak_rss+peak_children_rss,
+              'peak_threads':peak_threads,
+              'cpu_user_seconds':round(cpu_end.user-cpu_start.user,3),
+              'cpu_system_seconds':round(cpu_end.system-cpu_start.system,3),
+              'credentials_used':False,
+              'raw_rows_persisted':False,
+          }
+          print(json.dumps(out,indent=2,sort_keys=True))
+          if len(markets)!=212 or connections!=4 or errors: raise SystemExit(3)
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lighter-resource-preflight-${{ github.run_id }}
+          path: lighter-resource-summary.json
+          retention-days: 3
+          if-no-files-found: error
