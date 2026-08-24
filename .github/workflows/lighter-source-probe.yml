@@ -12,8 +12,22 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 130
     steps:
       - uses: actions/checkout@v4
-      - name: Probe official Lighter deleverage Trade surface
-        run: python3 scripts/lighter_deleverage_trade_probe.py
+      - name: Install bounded WebSocket client
+        run: python3 -m pip install --disable-pip-version-check 'websockets==15.0.1'
+      - name: Monitor all active Lighter perp trade streams
+        env:
+          LIGHTER_MONITOR_SECONDS: '7200'
+          LIGHTER_WS_SHARDS: '4'
+        run: |
+          set -o pipefail
+          python3 scripts/lighter_deleverage_trade_probe.py | tee lighter-source-summary.json
+      - name: Upload aggregate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighter-source-summary
+          path: lighter-source-summary.json
+          retention-days: 7

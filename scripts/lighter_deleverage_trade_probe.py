@@ -1,75 +1,48 @@
 #!/usr/bin/env python3
-"""Bounded public-safe probe for Lighter Trade(type=deleverage).
+"""Bounded first-party Lighter whole-exchange liquidation WebSocket monitor.
 
-New hypothesis: official /api/v1/trades is market/account scoped, so a request
-without either scope can return 400 even though deleverage trades are exposed.
-This probe resolves active perp markets from orderBooks and queries a small paced
-set by market_id with server-side type=deleverage, stopping after enough positive
-evidence. Output is aggregate-only: no account ids, tx hashes, trade ids or raw
-rows are emitted or persisted.
+Purpose: determine whether public trade/<market_id> updates expose full
+liquidation / INTERNAL_DELEVERAGE events as Trade(type="deleverage"), while also
+counting the documented liquidation_trades field. Public-safe aggregate evidence
+only: no account ids, tx hashes, trade ids, raw rows, credentials, or proprietary
+Wave Alpha data are persisted or printed.
 """
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import json
 import math
+import os
 import time
-import urllib.error
-import urllib.parse
 import urllib.request
 from collections import Counter
 
-BASE = "https://mainnet.zklighter.elliot.ai"
-TIMEOUT = 15
-UA = "WaveAlpha-QA-Lighter-Deleverage-Trade/2.0"
-LIMIT = 20
-MAX_MARKETS = 24
-POSITIVE_MARKET_TARGET = 3
-PACE_SECONDS = 1.1
-EXPECTED_TYPE = "deleverage"
+import websockets
+
+HTTP_BASE = "https://mainnet.zklighter.elliot.ai"
+WS_URI = "wss://mainnet.zklighter.elliot.ai/stream?readonly=true"
+HTTP_TIMEOUT = 15
+DURATION_SECONDS = int(os.environ.get("LIGHTER_MONITOR_SECONDS", "7200"))
+SHARD_COUNT = int(os.environ.get("LIGHTER_WS_SHARDS", "4"))
+SUBSCRIBE_PACE_SECONDS = 0.03
+EARLY_DELEVERAGE_TARGET = 3
+EARLY_DELEVERAGE_MARKET_TARGET = 2
 
 
-def get_json(path: str, params=None):
-    url = BASE + path
-    if params:
-        url += "?" + urllib.parse.urlencode(params, doseq=True)
-    req = urllib.request.Request(url, headers={"Accept": "application/json", "User-Agent": UA})
-    try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-            body = resp.read()
-            status = resp.status
-    except urllib.error.HTTPError as exc:
-        body = exc.read()
-        status = exc.code
-    try:
-        payload = json.loads(body.decode("utf-8"))
-    except Exception:
-        payload = None
-    return status, payload, len(body)
-
-
-def finite_num(value):
-    try:
-        x = float(value)
-    except Exception:
-        return None
-    return x if math.isfinite(x) else None
-
-
-def sign_name(value):
-    x = finite_num(value)
-    if x is None:
-        return "missing_or_invalid"
-    if x > 0:
-        return "positive"
-    if x < 0:
-        return "negative"
-    return "zero"
+def get_json(path: str):
+    req = urllib.request.Request(
+        HTTP_BASE + path,
+        headers={"Accept": "application/json", "User-Agent": "WaveAlpha-QA-Lighter-WS/1.0"},
+    )
+    with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as resp:
+        return resp.status, json.loads(resp.read().decode("utf-8"))
 
 
 def active_perps(payload):
     rows = payload.get("order_books") if isinstance(payload, dict) else None
     if not isinstance(rows, list):
-        return None
+        return []
     out = []
     for row in rows:
         if not isinstance(row, dict):
@@ -79,167 +52,250 @@ def active_perps(payload):
         if str(row.get("status") or "").lower() != "active":
             continue
         market_id = row.get("market_id")
-        if isinstance(market_id, bool) or not isinstance(market_id, int) or market_id < 0:
-            continue
-        out.append(market_id)
+        if isinstance(market_id, int) and not isinstance(market_id, bool) and market_id >= 0:
+            out.append(market_id)
     return sorted(set(out))
 
 
-def summarize_rows(payload):
-    rows = payload.get("trades") if isinstance(payload, dict) else None
-    if not isinstance(rows, list):
+def as_rows(value):
+    if isinstance(value, list):
+        return [x for x in value if isinstance(x, dict)]
+    if isinstance(value, dict):
+        return [value]
+    return []
+
+
+def finite(value):
+    try:
+        x = float(value)
+    except Exception:
         return None
+    return x if math.isfinite(x) else None
 
-    type_counts = Counter()
-    maker_ask_counts = Counter()
-    taker_before_signs = Counter()
-    maker_before_signs = Counter()
-    field_presence = Counter()
-    side_candidates = Counter()
-    timestamps = []
-    malformed = 0
-    inconsistent_type = 0
 
-    for row in rows:
-        if not isinstance(row, dict):
-            malformed += 1
-            continue
-        row_type = str(row.get("type") or "")
-        type_counts[row_type] += 1
-        if row_type != EXPECTED_TYPE:
-            inconsistent_type += 1
+def sign_name(value):
+    x = finite(value)
+    if x is None:
+        return "missing_or_invalid"
+    if x > 0:
+        return "positive"
+    if x < 0:
+        return "negative"
+    return "zero"
 
+
+class Evidence:
+    def __init__(self, active_markets):
+        self.active_markets = active_markets
+        self.started_at = time.time()
+        self.connections = 0
+        self.reconnects = 0
+        self.subscription_messages_sent = 0
+        self.messages = 0
+        self.update_messages = 0
+        self.market_updates = Counter()
+        self.trade_rows = 0
+        self.liquidation_field_rows = 0
+        self.trades_type_counts = Counter()
+        self.liquidation_field_type_counts = Counter()
+        self.nontrade_source_counts = Counter()
+        self.nontrade_markets = set()
+        self.deleverage_markets = set()
+        self.field_presence = Counter()
+        self.side_candidates = Counter()
+        self.seen_trade_keys = set()
+        self.duplicate_trade_keys = 0
+        self.seen_tx_hashes = set()
+        self.errors = Counter()
+        self.stop = asyncio.Event()
+
+    def record_trade(self, row, source):
+        row_type = str(row.get("type") or "missing")
         market_id = row.get("market_id")
-        timestamp = row.get("timestamp")
-        usd = finite_num(row.get("usd_amount"))
-        price = finite_num(row.get("price"))
-        size = finite_num(row.get("size"))
-        if (
-            isinstance(market_id, bool) or not isinstance(market_id, int) or market_id < 0
-            or isinstance(timestamp, bool) or not isinstance(timestamp, int) or timestamp < 0
-            or usd is None or usd < 0 or price is None or price < 0 or size is None or size < 0
-        ):
-            malformed += 1
-            continue
-
-        timestamps.append(timestamp)
-        maker_ask = row.get("is_maker_ask")
-        maker_key = "true" if maker_ask is True else "false" if maker_ask is False else "other"
-        maker_ask_counts[maker_key] += 1
-        taker_sign = sign_name(row.get("taker_position_size_before"))
-        maker_sign = sign_name(row.get("maker_position_size_before"))
-        taker_before_signs[taker_sign] += 1
-        maker_before_signs[maker_sign] += 1
-
-        # Official INTERNAL_DELEVERAGE circuit applies bankrupt account as taker.
-        if maker_ask is False and taker_sign == "positive":
-            side_candidates["long"] += 1
-        elif maker_ask is True and taker_sign == "negative":
-            side_candidates["short"] += 1
+        if source == "trades":
+            self.trade_rows += 1
+            self.trades_type_counts[row_type] += 1
         else:
-            side_candidates["unresolved"] += 1
+            self.liquidation_field_rows += 1
+            self.liquidation_field_type_counts[row_type] += 1
 
-        for key in (
-            "market_id", "size", "price", "usd_amount", "is_maker_ask", "block_height",
-            "timestamp", "taker_position_size_before", "maker_position_size_before", "transaction_time",
-        ):
-            if key in row and row.get(key) not in (None, ""):
-                field_presence[key] += 1
+        if row_type != "trade" or source == "liquidation_trades":
+            self.nontrade_source_counts[f"{source}:{row_type}"] += 1
+            if isinstance(market_id, int):
+                self.nontrade_markets.add(market_id)
+            if row_type == "deleverage" and isinstance(market_id, int):
+                self.deleverage_markets.add(market_id)
 
-    return {
-        "row_count": len(rows),
-        "type_counts": dict(sorted(type_counts.items())),
-        "timestamp_range": [min(timestamps), max(timestamps)] if timestamps else None,
-        "is_maker_ask_counts": dict(sorted(maker_ask_counts.items())),
-        "taker_position_size_before_signs": dict(sorted(taker_before_signs.items())),
-        "maker_position_size_before_signs": dict(sorted(maker_before_signs.items())),
-        "candidate_liquidated_side_counts": dict(sorted(side_candidates.items())),
-        "field_presence_counts": dict(sorted(field_presence.items())),
-        "malformed_rows": malformed,
-        "unexpected_non_deleverage_rows": inconsistent_type,
-        "next_cursor_present": bool(payload.get("next_cursor")),
-    }
+            for key in (
+                "market_id", "size", "price", "usd_amount", "is_maker_ask",
+                "block_height", "timestamp", "taker_position_size_before",
+                "maker_position_size_before", "transaction_time",
+            ):
+                if row.get(key) not in (None, ""):
+                    self.field_presence[key] += 1
 
+            # Protocol evidence: bankrupt account is taker. Use both maker/taker
+            # direction and pre-position sign; otherwise keep the side unresolved.
+            maker_ask = row.get("is_maker_ask")
+            taker_sign = sign_name(row.get("taker_position_size_before"))
+            if maker_ask is False and taker_sign == "positive":
+                self.side_candidates["long"] += 1
+            elif maker_ask is True and taker_sign == "negative":
+                self.side_candidates["short"] += 1
+            else:
+                self.side_candidates["unresolved"] += 1
 
-def query_market(market_id):
-    return get_json("/api/v1/trades", {
-        "market_id": market_id,
-        "market_type": "perp",
-        "sort_by": "timestamp",
-        "sort_dir": "desc",
-        "type": EXPECTED_TYPE,
-        "limit": LIMIT,
-    })
+        trade_id = row.get("trade_id")
+        if trade_id not in (None, "") and isinstance(market_id, int):
+            # Keep only a one-way hash in memory; never emit the raw identity.
+            digest = hashlib.sha256(f"{market_id}:{trade_id}".encode()).digest()
+            if digest in self.seen_trade_keys:
+                self.duplicate_trade_keys += 1
+            else:
+                self.seen_trade_keys.add(digest)
 
+        tx_hash = row.get("tx_hash")
+        if tx_hash not in (None, ""):
+            self.seen_tx_hashes.add(hashlib.sha256(str(tx_hash).encode()).digest())
 
-def main():
-    meta_http, meta, meta_bytes = get_json("/api/v1/orderBooks")
-    markets = active_perps(meta)
-    output = {
-        "probe": "lighter-deleverage-by-market-v1",
-        "expected_type": EXPECTED_TYPE,
-        "order_books_http": meta_http,
-        "order_books_response_bytes": meta_bytes,
-        "active_perp_count": len(markets) if isinstance(markets, list) else None,
-        "max_markets": MAX_MARKETS,
-        "positive_market_target": POSITIVE_MARKET_TARGET,
-        "market_reads": [],
-        "markets_attempted": 0,
-        "positive_markets": 0,
-        "deleverage_rows_observed": 0,
-        "aggregate_side_candidates": {},
-        "raw_trades_persisted": False,
-        "account_ids_logged": False,
-        "transaction_hashes_logged": False,
-        "trade_ids_logged": False,
-        "credentials_used": False,
-    }
-    if meta_http != 200 or not isinstance(markets, list) or not markets:
-        print(json.dumps(output, indent=2, sort_keys=True))
-        raise SystemExit(2)
+        deleverage_count = self.trades_type_counts.get("deleverage", 0) + self.liquidation_field_type_counts.get("deleverage", 0)
+        if deleverage_count >= EARLY_DELEVERAGE_TARGET and len(self.deleverage_markets) >= EARLY_DELEVERAGE_MARKET_TARGET:
+            self.stop.set()
 
-    aggregate_sides = Counter()
-    hard_failure = False
-    for market_id in markets[:MAX_MARKETS]:
-        http, payload, size = query_market(market_id)
-        summary = summarize_rows(payload)
-        entry = {
-            "market_id": market_id,
-            "http": http,
-            "response_bytes": size,
-            "summary": summary,
+    def summary(self):
+        elapsed = max(0.0, time.time() - self.started_at)
+        deleverage_rows = self.trades_type_counts.get("deleverage", 0) + self.liquidation_field_type_counts.get("deleverage", 0)
+        liquidation_rows = self.trades_type_counts.get("liquidation", 0) + self.liquidation_field_type_counts.get("liquidation", 0)
+        return {
+            "probe": "lighter-full-212-public-ws-v1",
+            "source": WS_URI,
+            "requested_duration_seconds": DURATION_SECONDS,
+            "observed_duration_seconds": round(elapsed, 3),
+            "active_perp_count": len(self.active_markets),
+            "ws_shards": SHARD_COUNT,
+            "connections_opened": self.connections,
+            "reconnects": self.reconnects,
+            "subscription_messages_sent": self.subscription_messages_sent,
+            "all_active_markets_subscribed": self.subscription_messages_sent >= len(self.active_markets),
+            "messages_received": self.messages,
+            "trade_update_messages": self.update_messages,
+            "markets_with_updates": len(self.market_updates),
+            "trade_rows": self.trade_rows,
+            "trades_type_counts": dict(sorted(self.trades_type_counts.items())),
+            "liquidation_trades_rows": self.liquidation_field_rows,
+            "liquidation_trades_type_counts": dict(sorted(self.liquidation_field_type_counts.items())),
+            "nontrade_source_counts": dict(sorted(self.nontrade_source_counts.items())),
+            "nontrade_market_count": len(self.nontrade_markets),
+            "deleverage_rows_observed": deleverage_rows,
+            "deleverage_market_count": len(self.deleverage_markets),
+            "liquidation_rows_observed": liquidation_rows,
+            "side_candidate_counts": dict(sorted(self.side_candidates.items())),
+            "nontrade_field_presence_counts": dict(sorted(self.field_presence.items())),
+            "unique_trade_identity_hashes": len(self.seen_trade_keys),
+            "duplicate_trade_identity_count": self.duplicate_trade_keys,
+            "unique_tx_hash_hashes": len(self.seen_tx_hashes),
+            "connection_error_counts": dict(sorted(self.errors.items())),
+            "credentials_used": False,
+            "raw_rows_persisted": False,
+            "account_ids_logged": False,
+            "trade_ids_logged": False,
+            "transaction_hashes_logged": False,
+            "verdict": (
+                "DELEVERAGE_OBSERVED"
+                if deleverage_rows > 0
+                else "NONTRADE_OBSERVED_NO_DELEVERAGE"
+                if self.nontrade_source_counts
+                else "NO_NONTRADE_EVENT_OBSERVED_IN_WINDOW"
+            ),
         }
-        if isinstance(payload, dict) and summary is None:
-            entry["code"] = payload.get("code")
-            entry["message"] = str(payload.get("message") or "")[:120]
-        output["market_reads"].append(entry)
-        output["markets_attempted"] += 1
 
-        if http == 200 and isinstance(summary, dict):
-            if summary["malformed_rows"] or summary["unexpected_non_deleverage_rows"]:
-                hard_failure = True
-            if summary["row_count"] > 0:
-                output["positive_markets"] += 1
-                output["deleverage_rows_observed"] += summary["row_count"]
-                aggregate_sides.update(summary["candidate_liquidated_side_counts"])
-                if output["positive_markets"] >= POSITIVE_MARKET_TARGET:
-                    break
-        elif http == 429:
-            # Respect provider boundary; one bounded cooldown then continue.
-            time.sleep(5)
-        elif http not in (200, 400, 403):
-            hard_failure = True
 
-        time.sleep(PACE_SECONDS)
+async def shard_worker(shard_id, market_ids, evidence, deadline):
+    attempt = 0
+    while time.time() < deadline and not evidence.stop.is_set():
+        try:
+            async with websockets.connect(
+                WS_URI,
+                ping_interval=20,
+                ping_timeout=20,
+                close_timeout=5,
+                max_size=16 * 1024 * 1024,
+                open_timeout=15,
+            ) as ws:
+                evidence.connections += 1
+                if attempt:
+                    evidence.reconnects += 1
+                attempt = 0
 
-    output["aggregate_side_candidates"] = dict(sorted(aggregate_sides.items()))
-    print(json.dumps(output, indent=2, sort_keys=True))
+                for market_id in market_ids:
+                    await ws.send(json.dumps({"type": "subscribe", "channel": f"trade/{market_id}"}))
+                    evidence.subscription_messages_sent += 1
+                    await asyncio.sleep(SUBSCRIBE_PACE_SECONDS)
 
-    if hard_failure:
-        raise SystemExit(3)
-    if not any(item.get("http") == 200 and isinstance(item.get("summary"), dict) for item in output["market_reads"]):
+                while time.time() < deadline and not evidence.stop.is_set():
+                    remaining = max(0.1, min(5.0, deadline - time.time()))
+                    try:
+                        raw = await asyncio.wait_for(ws.recv(), timeout=remaining)
+                    except asyncio.TimeoutError:
+                        continue
+                    evidence.messages += 1
+                    try:
+                        payload = json.loads(raw)
+                    except Exception:
+                        evidence.errors["json_decode"] += 1
+                        continue
+                    if payload.get("type") != "update/trade":
+                        continue
+                    evidence.update_messages += 1
+                    channel = str(payload.get("channel") or "")
+                    if ":" in channel:
+                        try:
+                            evidence.market_updates[int(channel.rsplit(":", 1)[1])] += 1
+                        except Exception:
+                            pass
+                    for row in as_rows(payload.get("trades")):
+                        evidence.record_trade(row, "trades")
+                    for row in as_rows(payload.get("liquidation_trades")):
+                        evidence.record_trade(row, "liquidation_trades")
+        except Exception as exc:
+            evidence.errors[type(exc).__name__] += 1
+            attempt += 1
+            if time.time() >= deadline or evidence.stop.is_set():
+                break
+            await asyncio.sleep(min(10, 2 ** min(attempt - 1, 3)))
+
+
+async def main():
+    status, meta = get_json("/api/v1/orderBooks")
+    markets = active_perps(meta)
+    if status != 200 or not markets:
+        print(json.dumps({"probe": "lighter-full-212-public-ws-v1", "order_books_http": status, "active_perp_count": len(markets), "verdict": "METADATA_FAIL"}, sort_keys=True))
         raise SystemExit(2)
+
+    shards = [[] for _ in range(SHARD_COUNT)]
+    for index, market_id in enumerate(markets):
+        shards[index % SHARD_COUNT].append(market_id)
+
+    evidence = Evidence(markets)
+    deadline = time.time() + DURATION_SECONDS
+    tasks = [asyncio.create_task(shard_worker(i, shard, evidence, deadline)) for i, shard in enumerate(shards)]
+
+    try:
+        while time.time() < deadline and not evidence.stop.is_set():
+            await asyncio.sleep(min(5, max(0.1, deadline - time.time())))
+    finally:
+        evidence.stop.set()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    summary = evidence.summary()
+    print(json.dumps(summary, indent=2, sort_keys=True))
+
+    # Technical failure only if we could not establish all shards or send every
+    # active-market subscription. Absence of rare liquidation/deleverage events
+    # is evidence, not an error and must not be converted to zero/PASS.
+    if summary["connections_opened"] < SHARD_COUNT or not summary["all_active_markets_subscribed"]:
+        raise SystemExit(3)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
