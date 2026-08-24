@@ -20,7 +20,8 @@ if (!activeMarketIds.length) throw new Error('server metadata returned no active
 
 const browser = await chromium.launch({ headless: true });
 try {
-  const page = await browser.newPage();
+  const context = await browser.newContext({ bypassCSP: true });
+  const page = await context.newPage();
   await page.addInitScript(() => {
     globalThis.__waProbeNativeWebSocket = globalThis.WebSocket;
   });
@@ -79,6 +80,7 @@ try {
 
     return {
       pageOrigin: location.origin,
+      cspBypassedForDiagnosis: true,
       serverMetadataHttp: 200,
       activePerpMarkets: activeMarketIds.length,
       sockets: sockets.length,
@@ -97,6 +99,7 @@ try {
     throw new Error('LIGHTER_BROWSER_ORIGIN_PROBE=FAIL');
   }
   console.log('LIGHTER_BROWSER_ORIGIN_PROBE=PASS');
+  await context.close();
 } finally {
   await browser.close();
 }
