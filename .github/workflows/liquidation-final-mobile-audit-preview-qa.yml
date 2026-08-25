@@ -1,0 +1,27 @@
+name: Liquidation final mobile and page-audit Preview QA
+
+on:
+  push:
+    paths:
+      - "scripts/liquidation-final-mobile-audit-preview-qa.mjs"
+      - ".github/workflows/liquidation-final-mobile-audit-preview-qa.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  browser-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      WA_PREVIEW_URL: https://5dda0acf.wave-alpha.pages.dev/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install --no-save playwright@1.55.0
+      - run: npx playwright install --with-deps chromium
+      - name: Run final mobile + page-audit gate
+        run: node scripts/liquidation-final-mobile-audit-preview-qa.mjs
