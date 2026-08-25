@@ -88,17 +88,31 @@ try {
   await page.goto(`${target}/?liquidationTest=1`, { waitUntil: 'domcontentloaded', timeout: 45_000 });
   await page.waitForFunction(() => {
     const audit = window.WaveLiquidationPageAudit?.snapshot?.();
-    return audit?.mounted === true && typeof window.WaveCryptoLiquidation?.activate === 'function';
+    return audit?.mounted === true
+      && typeof window.CryptoMarket?.onTabActivated === 'function'
+      && typeof window.WaveCryptoLiquidation?.activate === 'function';
   }, null, { timeout: 25_000, polling: 80 });
-  await page.evaluate(() => window.WaveCryptoLiquidation.activate());
+
+  await page.evaluate(() => {
+    const cryptoView = document.getElementById('crypto-market-view');
+    if (!cryptoView) throw new Error('crypto-market-view missing');
+    cryptoView.style.display = 'block';
+    window.CryptoMarket.onTabActivated();
+    window.WaveCryptoLiquidation.activate();
+  });
   await page.waitForFunction(() => window.WaveLiquidationPageAudit?.snapshot?.()?.active === true, null, { timeout: 10_000, polling: 80 });
 
-  await page.locator('[data-cml-history-range="1d"]').click({ force: true });
-  await page.locator('[data-cml-tooltip-mode="exchanges"]').click({ force: true });
+  await page.evaluate(() => {
+    const range = document.querySelector('[data-cml-history-range="1d"]');
+    const tooltip = document.querySelector('[data-cml-tooltip-mode="exchanges"]');
+    if (!range || !tooltip) throw new Error('1D/Exchange tooltip controls missing');
+    range.click();
+    tooltip.click();
+  });
   await waitForHistoryReady();
 
   const svg = page.locator('#cml-history-chart svg').first();
-  await svg.waitFor({ state: 'attached', timeout: 10_000 });
+  await svg.waitFor({ state: 'visible', timeout: 10_000 });
   const box = await svg.boundingBox();
   if (!box || box.width <= 0 || box.height <= 0) throw new Error('history chart SVG has no visible bounding box');
 
