@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 6
     env:
-      WA_PREVIEW_URL: https://4bc987d0.wave-alpha.pages.dev/
+      WA_PREVIEW_URL: https://abb00875.wave-alpha.pages.dev/
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
