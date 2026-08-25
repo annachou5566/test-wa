@@ -17,18 +17,31 @@ const evidence = {
 
 async function activate(page) {
   await page.goto(`${target}/?liquidationTest=1`, { waitUntil: 'domcontentloaded', timeout: 45_000 });
-  await page.waitForFunction(() => typeof window.CryptoMarket?.onTabActivated === 'function' && typeof window.WaveCryptoLiquidation?.activate === 'function', null, { timeout: 25_000, polling: 80 });
-  await page.evaluate(() => {
-    const v = document.getElementById('crypto-market-view');
-    if (!v) throw new Error('crypto view missing');
-    v.style.display = 'block';
-    window.CryptoMarket.onTabActivated();
-    window.WaveCryptoLiquidation.activate();
-  });
-  await page.waitForFunction(() => {
-    const a = window.WaveCryptoLiquidation?.audit?.();
-    return a?.active === true && a?.historyLoading === false && Number(a?.historyRowCount || 0) > 0;
-  }, null, { timeout: 25_000, polling: 100 });
+  await page.waitForTimeout(1200);
+  let lastError = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await page.waitForLoadState('domcontentloaded', { timeout: 10_000 }).catch(() => {});
+      await page.waitForFunction(() => typeof window.CryptoMarket?.onTabActivated === 'function' && typeof window.WaveCryptoLiquidation?.activate === 'function', null, { timeout: 15_000, polling: 80 });
+      await page.evaluate(() => {
+        const v = document.getElementById('crypto-market-view');
+        if (!v) throw new Error('crypto view missing');
+        v.style.display = 'block';
+        window.CryptoMarket.onTabActivated();
+        window.WaveCryptoLiquidation.activate();
+      });
+      await page.waitForFunction(() => {
+        const a = window.WaveCryptoLiquidation?.audit?.();
+        return a?.active === true && a?.historyLoading === false && Number(a?.historyRowCount || 0) > 0;
+      }, null, { timeout: 15_000, polling: 100 });
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!/Execution context was destroyed|navigation|Timeout/i.test(String(error?.message || error))) throw error;
+      await page.waitForTimeout(900);
+    }
+  }
+  throw lastError || new Error('activation failed');
 }
 
 try {
