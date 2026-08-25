@@ -37,7 +37,7 @@ page.on('response', response => {
 });
 
 const evidence = {
-  schema: 'wave-liquidation-1d-tooltip-preview-qa-v3',
+  schema: 'wave-liquidation-1d-tooltip-preview-qa-v4',
   targetHost: new URL(target).hostname,
   generatedAt: new Date().toISOString(),
   rawRowsLogged: false,
@@ -167,20 +167,24 @@ try {
     }
   }
 
-  const audit = await page.evaluate(() => {
+  const runtime = await page.evaluate(() => {
     const source = window.WaveLiquidationPageAudit?.snapshot?.() || {};
+    const resilience = window.WaveLiquidationApiResilience?.snapshot?.() || {};
     return {
-      active: source.active === true,
-      historyRange: source.historyRange || null,
-      historyPayloadRange: source.historyPayloadRange || null,
-      historyPayloadSymbol: source.historyPayloadSymbol || null,
-      historyPayloadExchange: source.historyPayloadExchange || null,
-      historyTooltipMode: source.historyTooltipMode || null,
-      historyRowCount: Number.isFinite(Number(source.historyRowCount)) ? Number(source.historyRowCount) : null,
-      historyLoading: source.historyLoading === true,
-      priceStatus: source.priceStatus || null,
-      pricePointCount: Number.isFinite(Number(source.pricePointCount)) ? Number(source.pricePointCount) : null,
-      lastError: source.lastError ? String(source.lastError).slice(0, 180) : null,
+      audit: {
+        active: source.active === true,
+        historyRange: source.historyRange || null,
+        historyPayloadRange: source.historyPayloadRange || null,
+        historyPayloadSymbol: source.historyPayloadSymbol || null,
+        historyPayloadExchange: source.historyPayloadExchange || null,
+        historyTooltipMode: source.historyTooltipMode || null,
+        historyRowCount: Number.isFinite(Number(source.historyRowCount)) ? Number(source.historyRowCount) : null,
+        historyLoading: source.historyLoading === true,
+        priceStatus: source.priceStatus || null,
+        pricePointCount: Number.isFinite(Number(source.pricePointCount)) ? Number(source.pricePointCount) : null,
+        lastError: source.lastError ? String(source.lastError).slice(0, 180) : null,
+      },
+      cacheName: resilience.cacheName || null,
     };
   });
 
@@ -193,27 +197,39 @@ try {
     && String(response.exchange || '').toUpperCase() === 'ALL'
     && response.details === '1'
   );
+  const githubRunnerBinanceBlock = Boolean(
+    found
+    && !found.hasPrice
+    && priceResponses.some(item => item.route === 'same-origin-binance-spot-klines' && item.status >= 400)
+  );
+  const priceGate = Boolean(found?.hasPrice || githubRunnerBinanceBlock);
   const tooltipPass = Boolean(
     found
     && found.visible
     && found.realExchangeRowCount > 0
     && found.hasDate
-    && found.hasPrice
+    && priceGate
     && found.hasTotal
     && found.hasShort
     && found.hasLong
     && found.hasFooterTotal
   );
+  const cachePass = runtime.cacheName === 'wave-liquidation-read-v7';
 
-  evidence.audit = audit;
+  evidence.audit = runtime.audit;
+  evidence.cacheName = runtime.cacheName;
+  evidence.cacheNamespacePass = cachePass;
   evidence.detailRequest = response;
   evidence.exactDetailRequestObserved = exactRequestObserved;
   evidence.tooltip = found;
+  evidence.priceGate = found?.hasPrice
+    ? 'product-price-observed'
+    : (githubRunnerBinanceBlock ? 'github-runner-binance-block' : 'failed');
   evidence.genericTooltipSeen = genericTooltipSeen;
   evidence.observedPointerFraction = foundFraction;
   evidence.positionsTried = fractions.length;
   evidence.priceTransport = priceResponses;
-  evidence.pass = exactRequestObserved && tooltipPass && !audit.lastError;
+  evidence.pass = exactRequestObserved && tooltipPass && cachePass && !runtime.audit.lastError;
 } catch (error) {
   evidence.error = String(error?.message || error || '').slice(0, 360);
   evidence.priceTransport = priceResponses;
