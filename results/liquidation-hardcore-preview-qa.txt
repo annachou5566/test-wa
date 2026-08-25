@@ -1,54 +1,13 @@
 {
   "schema": "wave-liquidation-hardcore-preview-qa-v1",
-  "targetHost": "fe34ddbf.wave-alpha.pages.dev",
-  "generatedAt": "2026-08-25T14:11:45.254Z",
+  "targetHost": "b975c52d.wave-alpha.pages.dev",
+  "generatedAt": "2026-08-25T14:19:48.386Z",
   "rawRowsLogged": false,
   "screenshotsStored": false,
   "profiles": [
     {
       "profile": "desktop-1440x900",
-      "durationMs": 20476,
-      "verdict": "FAIL",
-      "productionCandidate": false,
-      "steps": [
-        {
-          "name": "Open Liquidation · initial 90D",
-          "functionalPass": false,
-          "elitePass": false,
-          "durationMs": 18030,
-          "eliteBudgetMs": 2500
-        }
-      ],
-      "final": {
-        "active": true,
-        "historyRange": "90d",
-        "historyPayloadRange": "90d",
-        "historyRowCount": 90,
-        "historyChartStyle": "wave",
-        "historyChartLayout": "diverging",
-        "historyTooltipMode": "summary",
-        "historyLoading": false,
-        "priceStatus": "unavailable",
-        "pricePointCount": 0,
-        "lastError": null
-      },
-      "consoleErrorCount": 256,
-      "pageErrorCount": 0,
-      "consoleErrors": [
-        "Refused to load the font 'data:font/woff;base64,d09GRgABAAAAAAmcAAsAAAAACVAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABPUy8yAAABCAAAAGAAAABgDxIFx2NtYXAAAAFoAAAAVAAAAFQXVtKKZ2FzcAAAAbwAAAAIAAAACAAAABBnbHlmAAABxAAABYAAAAWA5El8smhlYWQAAAdEAAAANgAAADYjPrKy",
-        "Refused to execute script from 'https://fe34ddbf.wave-alpha.pages.dev/public/js/wa-tablet-debugger.js?v=1008' because its MIME type ('text/html') is not executable, and strict MIME type checking is enabled.",
-        "TypeError: Failed to fetch\n    at https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.3/dist/umd/supabase.min.js:7:3766\n    at L.c.headers (https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.3/dist/umd/supabase.min.js:7:8599)\n    a",
-        "Data error: TypeError: Failed to fetch\n    at window.fetch (https://fe34ddbf.wave-alpha.pages.dev/public/js/chart-engine.js?v=1015:2300:26)\n    at waveSecurityFetch (https://fe34ddbf.wave-alpha.pages.dev/public/js/wave-security.js?v=1:156:6",
-        "Refused to connect to 'https://www.google.com/g/collect?v=2&tid=G-KTKQYTJ2ZC&gtm=45je68o0h2v9237276485za200zd9237276485&_p=1787667106246&gcd=13l3l3l3l1l1&npa=0&dma=0&_eu=AEAAAAQ&ae=a&are=1&cid=2036621078.1787667107&frm=0&ngs=1&pscdl=noapi&r",
-        "Fetch API cannot load https://www.google.com/g/collect?v=2&tid=G-KTKQYTJ2ZC&gtm=45je68o0h2v9237276485za200zd9237276485&_p=1787667106246&gcd=13l3l3l3l1l1&npa=0&dma=0&_eu=AEAAAAQ&ae=a&are=1&cid=2036621078.1787667107&frm=0&ngs=1&pscdl=noapi&rc",
-        "Refused to load the font 'data:font/woff;base64,d09GRgABAAAAAAmcAAsAAAAACVAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABPUy8yAAABCAAAAGAAAABgDxIFx2NtYXAAAAFoAAAAVAAAAFQXVtKKZ2FzcAAAAbwAAAAIAAAACAAAABBnbHlmAAABxAAABYAAAAWA5El8smhlYWQAAAdEAAAANgAAADYjPrKy",
-        "Refused to execute script from 'https://fe34ddbf.wave-alpha.pages.dev/public/js/wa-tablet-debugger.js?v=1008' because its MIME type ('text/html') is not executable, and strict MIME type checking is enabled."
-      ],
-      "pageErrors": []
-    },
-    {
-      "profile": "mobile-390x844-touch",
-      "durationMs": 20030,
+      "durationMs": 21268,
       "verdict": "FAIL",
       "productionCandidate": false,
       "steps": [
@@ -73,17 +32,58 @@
         "pricePointCount": 0,
         "lastError": null
       },
-      "consoleErrorCount": 273,
+      "consoleErrorCount": 103,
       "pageErrorCount": 0,
       "consoleErrors": [
         "Refused to load the font 'data:font/woff;base64,d09GRgABAAAAAAmcAAsAAAAACVAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABPUy8yAAABCAAAAGAAAABgDxIFx2NtYXAAAAFoAAAAVAAAAFQXVtKKZ2FzcAAAAbwAAAAIAAAACAAAABBnbHlmAAABxAAABYAAAAWA5El8smhlYWQAAAdEAAAANgAAADYjPrKy",
-        "Refused to execute script from 'https://fe34ddbf.wave-alpha.pages.dev/public/js/wa-tablet-debugger.js?v=1008' because its MIME type ('text/html') is not executable, and strict MIME type checking is enabled.",
+        "Refused to execute script from 'https://b975c52d.wave-alpha.pages.dev/public/js/wa-tablet-debugger.js?v=1008' because its MIME type ('text/html') is not executable, and strict MIME type checking is enabled.",
         "Failed to load resource: the server responded with a status of 403 ()",
-        "Failed to load resource: the server responded with a status of 403 ()",
-        "Access to fetch at 'https://api.binance.com/api/v3/ticker/24hr' from origin 'https://fe34ddbf.wave-alpha.pages.dev' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+        "Access to fetch at 'https://api.binance.com/api/v3/ticker/24hr' from origin 'https://b975c52d.wave-alpha.pages.dev' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
         "Failed to load resource: net::ERR_FAILED",
-        "Data error: TypeError: Failed to fetch\n    at window.fetch (https://fe34ddbf.wave-alpha.pages.dev/public/js/chart-engine.js?v=1015:2300:26)\n    at waveSecurityFetch (https://fe34ddbf.wave-alpha.pages.dev/public/js/wave-security.js?v=1:156:6",
-        "❌ Lỗi tải dữ liệu: TypeError: Failed to fetch\n    at window.fetch (https://fe34ddbf.wave-alpha.pages.dev/public/js/chart-engine.js?v=1015:2300:26)\n    at waveSecurityFetch (https://fe34ddbf.wave-alpha.pages.dev/public/js/wave-security.js?v="
+        "Failed to load resource: the server responded with a status of 403 ()",
+        "Access to XMLHttpRequest at 'https://cloudflareinsights.com/cdn-cgi/rum' from origin 'https://b975c52d.wave-alpha.pages.dev' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+        "Failed to load resource: net::ERR_FAILED"
+      ],
+      "pageErrors": []
+    },
+    {
+      "profile": "mobile-390x844-touch",
+      "durationMs": 20271,
+      "verdict": "FAIL",
+      "productionCandidate": false,
+      "steps": [
+        {
+          "name": "Open Liquidation · initial 90D",
+          "functionalPass": false,
+          "elitePass": false,
+          "durationMs": 18042,
+          "eliteBudgetMs": 2500
+        }
+      ],
+      "final": {
+        "active": true,
+        "historyRange": "90d",
+        "historyPayloadRange": "90d",
+        "historyRowCount": 90,
+        "historyChartStyle": "wave",
+        "historyChartLayout": "diverging",
+        "historyTooltipMode": "summary",
+        "historyLoading": false,
+        "priceStatus": "unavailable",
+        "pricePointCount": 0,
+        "lastError": null
+      },
+      "consoleErrorCount": 259,
+      "pageErrorCount": 0,
+      "consoleErrors": [
+        "Refused to load the font 'data:font/woff;base64,d09GRgABAAAAAAmcAAsAAAAACVAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABPUy8yAAABCAAAAGAAAABgDxIFx2NtYXAAAAFoAAAAVAAAAFQXVtKKZ2FzcAAAAbwAAAAIAAAACAAAABBnbHlmAAABxAAABYAAAAWA5El8smhlYWQAAAdEAAAANgAAADYjPrKy",
+        "Refused to execute script from 'https://b975c52d.wave-alpha.pages.dev/public/js/wa-tablet-debugger.js?v=1008' because its MIME type ('text/html') is not executable, and strict MIME type checking is enabled.",
+        "Failed to load resource: the server responded with a status of 403 ()",
+        "Failed to load resource: the server responded with a status of 403 ()",
+        "Access to fetch at 'https://api.binance.com/api/v3/ticker/24hr' from origin 'https://b975c52d.wave-alpha.pages.dev' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource.",
+        "Failed to load resource: net::ERR_FAILED",
+        "Data error: TypeError: Failed to fetch\n    at window.fetch (https://b975c52d.wave-alpha.pages.dev/public/js/chart-engine.js?v=1015:2300:26)\n    at waveSecurityFetch (https://b975c52d.wave-alpha.pages.dev/public/js/wave-security.js?v=1:156:6",
+        "Refused to connect to 'https://www.google.com/g/collect?v=2&tid=G-KTKQYTJ2ZC&gtm=45je68l1v9237276485za200zd9237276485&_p=1787667610469&gcd=13l3l3l3l1l1&npa=0&dma=0&_eu=AEAAAAQ&ae=a&are=1&cid=541122666.1787667611&frm=0&ngs=1&pscdl=noapi&rcb="
       ],
       "pageErrors": []
     }
