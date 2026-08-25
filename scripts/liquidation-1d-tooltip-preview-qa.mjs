@@ -9,29 +9,40 @@ const browser = await chromium.launch({ headless: true });
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 });
 const page = await context.newPage();
 const historyResponses = [];
+const priceResponses = [];
 
 page.on('response', response => {
   try {
     const url = new URL(response.url());
-    if (url.pathname !== '/api/liquidations/history' || url.searchParams.get('details') !== '1') return;
-    historyResponses.push({
-      status: response.status(),
-      range: url.searchParams.get('range'),
-      symbol: url.searchParams.get('symbol'),
-      exchange: url.searchParams.get('exchange'),
-      details: url.searchParams.get('details'),
-      source: response.headers()['x-wave-liquidation-source'] || null,
-      cache: response.headers()['x-wave-liquidation-cache'] || null,
-    });
+    if (url.pathname === '/api/liquidations/history' && url.searchParams.get('details') === '1') {
+      historyResponses.push({
+        status: response.status(),
+        range: url.searchParams.get('range'),
+        symbol: url.searchParams.get('symbol'),
+        exchange: url.searchParams.get('exchange'),
+        details: url.searchParams.get('details'),
+        source: response.headers()['x-wave-liquidation-source'] || null,
+        cache: response.headers()['x-wave-liquidation-cache'] || null,
+      });
+      return;
+    }
+    if (url.pathname === '/api/binance-spot' && url.searchParams.get('endpoint') === '/api/v3/klines') {
+      priceResponses.push({ route: 'same-origin-binance-spot-klines', status: response.status() });
+      return;
+    }
+    if (url.hostname === 'fapi.binance.com' && url.pathname === '/fapi/v1/klines') {
+      priceResponses.push({ route: 'direct-binance-futures-klines', status: response.status() });
+    }
   } catch (_) {}
 });
 
 const evidence = {
-  schema: 'wave-liquidation-1d-tooltip-preview-qa-v1',
+  schema: 'wave-liquidation-1d-tooltip-preview-qa-v2',
   targetHost: new URL(target).hostname,
   generatedAt: new Date().toISOString(),
   rawRowsLogged: false,
   exchangeTriplesLogged: false,
+  priceValuesLogged: false,
   pass: false,
 };
 
@@ -51,14 +62,13 @@ async function waitForHistoryReady() {
   }, null, { timeout: 25_000, polling: 80 });
 }
 
-function tooltipState() {
+function exchangeTooltipState() {
   const tooltip = document.getElementById('cml-exchange-tooltip');
   if (!tooltip || tooltip.hidden) return null;
   const style = getComputedStyle(tooltip);
   const rect = tooltip.getBoundingClientRect();
   if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0 || rect.width <= 0 || rect.height <= 0) return null;
 
-  const head = tooltip.querySelector('.cml-exchange-tip-head');
   const date = String(tooltip.querySelector('.cml-exchange-tip-date')?.textContent || '').trim();
   const price = String(tooltip.querySelector('.cml-exchange-tip-price')?.textContent || '').trim();
   const total = String(tooltip.querySelector('.cml-exchange-tip-total')?.textContent || '').trim();
@@ -68,7 +78,6 @@ function tooltipState() {
     return cells.length >= 3 && cells[0] && cells[1] && cells[2] && cells[1] !== '—' && cells[2] !== '—';
   });
   const footer = String(tooltip.querySelector('tfoot')?.textContent || '').replace(/\s+/g, ' ').trim();
-  const headerText = String(head?.textContent || '').replace(/\s+/g, ' ').trim();
 
   return {
     visible: true,
@@ -80,8 +89,19 @@ function tooltipState() {
     hasShort: /Short/i.test(String(tooltip.querySelector('thead')?.textContent || '')),
     hasLong: /Long/i.test(String(tooltip.querySelector('thead')?.textContent || '')),
     hasFooterTotal: /Total/i.test(footer),
-    headerPresent: headerText.length > 0,
   };
+}
+
+function genericTooltipVisible() {
+  const tip = document.querySelector('#cml-history-chart .wc-tip');
+  if (!tip) return false;
+  const style = getComputedStyle(tip);
+  const rect = tip.getBoundingClientRect();
+  return style.display !== 'none'
+    && style.visibility !== 'hidden'
+    && Number(style.opacity) !== 0
+    && rect.width > 0
+    && rect.height > 0;
 }
 
 try {
@@ -111,20 +131,35 @@ try {
   });
   await waitForHistoryReady();
 
-  const svg = page.locator('#cml-history-chart svg').first();
-  await svg.waitFor({ state: 'visible', timeout: 10_000 });
-  const box = await svg.boundingBox();
-  if (!box || box.width <= 0 || box.height <= 0) throw new Error('history chart SVG has no visible bounding box');
+  await page.locator('#cml-history-chart svg.wc-svg').waitFor({ state: 'visible', timeout: 10_000 });
+  await page.waitForFunction(() => {
+    const svg = document.querySelector('#cml-history-chart svg.wc-svg');
+    return Boolean(svg?.querySelector('rect[id$="-cap"]'));
+  }, null, { timeout: 10_000, polling: 80 });
 
   let found = null;
   let foundFraction = null;
-  const fractions = [0.08, 0.16, 0.24, 0.32, 0.40, 0.48, 0.56, 0.64, 0.72, 0.80, 0.88, 0.94];
+  let genericTooltipSeen = false;
+  const fractions = Array.from({ length: 61 }, (_, index) => (index + 1) / 62);
   for (const fraction of fractions) {
-    await page.mouse.move(box.x + box.width * fraction, box.y + box.height * 0.46);
-    await page.waitForTimeout(120);
-    const state = await page.evaluate(tooltipState);
-    if (state?.visible && state.realExchangeRowCount > 0) {
-      found = state;
+    await page.evaluate(value => {
+      const cap = document.querySelector('#cml-history-chart svg.wc-svg rect[id$="-cap"]');
+      if (!cap) throw new Error('WaveChart capture rect missing');
+      const rect = cap.getBoundingClientRect();
+      const clientX = rect.left + rect.width * value;
+      const clientY = rect.top + rect.height * 0.5;
+      const base = { bubbles: true, cancelable: true, pointerId: 1, pointerType: 'mouse', clientX, clientY };
+      cap.dispatchEvent(new PointerEvent('pointerenter', base));
+      cap.dispatchEvent(new PointerEvent('pointermove', base));
+    }, fraction);
+    await page.waitForTimeout(60);
+    const state = await page.evaluate(() => ({
+      exchange: exchangeTooltipState(),
+      genericVisible: genericTooltipVisible(),
+    }));
+    genericTooltipSeen ||= state.genericVisible;
+    if (state.exchange?.visible && state.exchange.realExchangeRowCount > 0) {
+      found = state.exchange;
       foundFraction = fraction;
       break;
     }
@@ -172,11 +207,14 @@ try {
   evidence.detailRequest = response;
   evidence.exactDetailRequestObserved = exactRequestObserved;
   evidence.tooltip = found;
+  evidence.genericTooltipSeen = genericTooltipSeen;
   evidence.observedPointerFraction = foundFraction;
   evidence.positionsTried = fractions.length;
+  evidence.priceTransport = priceResponses;
   evidence.pass = exactRequestObserved && tooltipPass && !audit.lastError;
 } catch (error) {
   evidence.error = String(error?.message || error || '').slice(0, 360);
+  evidence.priceTransport = priceResponses;
 }
 
 await context.close();
