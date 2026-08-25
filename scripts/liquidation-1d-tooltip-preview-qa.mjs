@@ -37,7 +37,7 @@ page.on('response', response => {
 });
 
 const evidence = {
-  schema: 'wave-liquidation-1d-tooltip-preview-qa-v2',
+  schema: 'wave-liquidation-1d-tooltip-preview-qa-v3',
   targetHost: new URL(target).hostname,
   generatedAt: new Date().toISOString(),
   rawRowsLogged: false,
@@ -60,48 +60,6 @@ async function waitForHistoryReady() {
       && !audit.lastError
       && Number(audit.historyRowCount || 0) > 0;
   }, null, { timeout: 25_000, polling: 80 });
-}
-
-function exchangeTooltipState() {
-  const tooltip = document.getElementById('cml-exchange-tooltip');
-  if (!tooltip || tooltip.hidden) return null;
-  const style = getComputedStyle(tooltip);
-  const rect = tooltip.getBoundingClientRect();
-  if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0 || rect.width <= 0 || rect.height <= 0) return null;
-
-  const date = String(tooltip.querySelector('.cml-exchange-tip-date')?.textContent || '').trim();
-  const price = String(tooltip.querySelector('.cml-exchange-tip-price')?.textContent || '').trim();
-  const total = String(tooltip.querySelector('.cml-exchange-tip-total')?.textContent || '').trim();
-  const bodyRows = [...tooltip.querySelectorAll('tbody tr')];
-  const realRows = bodyRows.filter(row => {
-    const cells = [...row.querySelectorAll('td')].map(cell => String(cell.textContent || '').replace(/\s+/g, ' ').trim());
-    return cells.length >= 3 && cells[0] && cells[1] && cells[2] && cells[1] !== '—' && cells[2] !== '—';
-  });
-  const footer = String(tooltip.querySelector('tfoot')?.textContent || '').replace(/\s+/g, ' ').trim();
-
-  return {
-    visible: true,
-    exchangeRowCount: bodyRows.length,
-    realExchangeRowCount: realRows.length,
-    hasDate: date.length > 0,
-    hasPrice: /^Price:\s*\$?[\d.]/.test(price),
-    hasTotal: /^Total:\s*\$?[\d.]/.test(total),
-    hasShort: /Short/i.test(String(tooltip.querySelector('thead')?.textContent || '')),
-    hasLong: /Long/i.test(String(tooltip.querySelector('thead')?.textContent || '')),
-    hasFooterTotal: /Total/i.test(footer),
-  };
-}
-
-function genericTooltipVisible() {
-  const tip = document.querySelector('#cml-history-chart .wc-tip');
-  if (!tip) return false;
-  const style = getComputedStyle(tip);
-  const rect = tip.getBoundingClientRect();
-  return style.display !== 'none'
-    && style.visibility !== 'hidden'
-    && Number(style.opacity) !== 0
-    && rect.width > 0
-    && rect.height > 0;
 }
 
 try {
@@ -153,10 +111,54 @@ try {
       cap.dispatchEvent(new PointerEvent('pointermove', base));
     }, fraction);
     await page.waitForTimeout(60);
-    const state = await page.evaluate(() => ({
-      exchange: exchangeTooltipState(),
-      genericVisible: genericTooltipVisible(),
-    }));
+    const state = await page.evaluate(() => {
+      const tooltip = document.getElementById('cml-exchange-tooltip');
+      let exchange = null;
+      if (tooltip && !tooltip.hidden) {
+        const style = getComputedStyle(tooltip);
+        const rect = tooltip.getBoundingClientRect();
+        const visible = style.display !== 'none'
+          && style.visibility !== 'hidden'
+          && Number(style.opacity) !== 0
+          && rect.width > 0
+          && rect.height > 0;
+        if (visible) {
+          const date = String(tooltip.querySelector('.cml-exchange-tip-date')?.textContent || '').trim();
+          const price = String(tooltip.querySelector('.cml-exchange-tip-price')?.textContent || '').trim();
+          const total = String(tooltip.querySelector('.cml-exchange-tip-total')?.textContent || '').trim();
+          const bodyRows = [...tooltip.querySelectorAll('tbody tr')];
+          const realRows = bodyRows.filter(row => {
+            const cells = [...row.querySelectorAll('td')].map(cell => String(cell.textContent || '').replace(/\s+/g, ' ').trim());
+            return cells.length >= 3 && cells[0] && cells[1] && cells[2] && cells[1] !== '—' && cells[2] !== '—';
+          });
+          const footer = String(tooltip.querySelector('tfoot')?.textContent || '').replace(/\s+/g, ' ').trim();
+          exchange = {
+            visible: true,
+            exchangeRowCount: bodyRows.length,
+            realExchangeRowCount: realRows.length,
+            hasDate: date.length > 0,
+            hasPrice: /^Price:\s*\$?[\d.]/.test(price),
+            hasTotal: /^Total:\s*\$?[\d.]/.test(total),
+            hasShort: /Short/i.test(String(tooltip.querySelector('thead')?.textContent || '')),
+            hasLong: /Long/i.test(String(tooltip.querySelector('thead')?.textContent || '')),
+            hasFooterTotal: /Total/i.test(footer),
+          };
+        }
+      }
+
+      const generic = document.querySelector('#cml-history-chart .wc-tip');
+      let genericVisible = false;
+      if (generic) {
+        const style = getComputedStyle(generic);
+        const rect = generic.getBoundingClientRect();
+        genericVisible = style.display !== 'none'
+          && style.visibility !== 'hidden'
+          && Number(style.opacity) !== 0
+          && rect.width > 0
+          && rect.height > 0;
+      }
+      return { exchange, genericVisible };
+    });
     genericTooltipSeen ||= state.genericVisible;
     if (state.exchange?.visible && state.exchange.realExchangeRowCount > 0) {
       found = state.exchange;
