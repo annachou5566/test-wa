@@ -1,0 +1,33 @@
+name: Liquidation 1D exchange tooltip Preview QA
+
+on:
+  push:
+    paths:
+      - "scripts/liquidation-1d-tooltip-preview-qa.mjs"
+      - ".github/workflows/liquidation-1d-tooltip-preview-qa.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: liquidation-1d-tooltip-preview-qa
+  cancel-in-progress: true
+
+jobs:
+  browser-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    env:
+      WA_PREVIEW_URL: https://0506ec60.wave-alpha.pages.dev/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install Playwright
+        run: npm install --no-save playwright@1.55.0
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run bounded 1D exchange tooltip regression
+        run: node scripts/liquidation-1d-tooltip-preview-qa.mjs
