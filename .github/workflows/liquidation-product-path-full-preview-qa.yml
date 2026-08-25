@@ -1,0 +1,33 @@
+name: Liquidation product-path full Preview QA
+
+on:
+  push:
+    paths:
+      - "scripts/liquidation-product-path-full-preview-qa.mjs"
+      - ".github/workflows/liquidation-product-path-full-preview-qa.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: liquidation-product-path-full-preview-qa
+  cancel-in-progress: true
+
+jobs:
+  browser-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      WA_PREVIEW_URL: https://d24211bf.wave-alpha.pages.dev/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install Playwright
+        run: npm install --no-save playwright@1.55.0
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run Product Path full Preview QA
+        run: node scripts/liquidation-product-path-full-preview-qa.mjs
