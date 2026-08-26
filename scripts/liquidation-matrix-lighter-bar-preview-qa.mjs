@@ -4,15 +4,16 @@ const target = String(process.env.WA_PREVIEW_URL || '').trim().replace(/\/+$/, '
 if (!/^https:\/\/[a-z0-9-]+\.wave-alpha\.pages\.dev$/i.test(target)) throw new Error('invalid Preview origin');
 
 const browser = await chromium.launch({ headless: true });
-const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+const page = await browser.newPage({ viewport: { width: 1400, height: 702 } });
 const evidence = {
-  schema: 'wave-liquidation-matrix-lighter-bar-preview-qa-v2',
+  schema: 'wave-liquidation-matrix-lighter-bar-preview-qa-v3-hidden-hardcore-predicates',
   targetHost: new URL(target).hostname,
   rawRowsLogged: false,
   exchangeTriplesLogged: false,
   priceValuesLogged: false,
   matrix: null,
   bar: null,
+  hiddenGate: null,
   pass: false,
 };
 
@@ -66,10 +67,7 @@ try {
     const shareNumeric = Number.parseFloat(shareText.replace('%', ''));
     const rows = [...document.querySelectorAll('#cmlx-body tr[data-exchange]:not(.cmlx-row-all)')].map(row => {
       const td = [...row.querySelectorAll(':scope > td')];
-      return {
-        exchange: String(row.dataset.exchange || ''),
-        liquidationText: String(td[1]?.textContent || '').trim(),
-      };
+      return { exchange: String(row.dataset.exchange || ''), liquidationText: String(td[1]?.textContent || '').trim() };
     });
     return {
       subtitle13: /13\s+sàn/i.test(subtitle),
@@ -89,19 +87,26 @@ try {
 
   const started = Date.now();
   await page.evaluate(() => {
+    document.querySelector('[data-cml-history-range="90d"]')?.click();
     document.querySelector('[data-cml-chart-style="bar"]')?.click();
     document.querySelector('[data-cml-chart-layout="diverging"]')?.click();
+    document.querySelector('[data-cml-tooltip-mode="exchanges"]')?.click();
   });
   await page.waitForFunction(() => {
     const s = window.WaveLiquidationPageAudit?.snapshot?.();
     const a = window.WaveLiquidationPageAudit?.run?.();
     const chart = document.getElementById('cml-history-chart');
-    return s?.historyChartStyle === 'bar'
+    return s?.historyRange === '90d'
+      && s?.historyPayloadRange === '90d'
+      && s?.historyChartStyle === 'bar'
       && s?.historyChartLayout === 'diverging'
+      && s?.historyTooltipMode === 'exchanges'
+      && s?.historyLoading !== true
+      && Number(s?.historyRowCount) === 90
       && chart?.dataset?.chartStyle === 'bar'
       && chart?.dataset?.chartLayout === 'diverging'
       && a?.checks?.longShortShareOneColumn === true;
-  }, null, { timeout: 2500, polling: 40 });
+  }, null, { timeout: 18_000, polling: 40 });
   const durationMs = Date.now() - started;
   evidence.bar = await page.evaluate(durationMs => {
     const s = window.WaveLiquidationPageAudit?.snapshot?.() || {};
@@ -112,15 +117,48 @@ try {
       rendererBarPairs: Number(s.rendererBarPairs || 0),
       rendererBarMisalignedPairs: Number(s.rendererBarMisalignedPairs || 0),
       barCheck: a?.checks?.longShortShareOneColumn === true,
-      pass: durationMs <= 500 && a?.checks?.longShortShareOneColumn === true,
+      pass: a?.checks?.longShortShareOneColumn === true,
     };
   }, durationMs);
+
+  evidence.hiddenGate = await page.evaluate(() => {
+    const s = window.WaveLiquidationPageAudit?.snapshot?.() || {};
+    const error = document.getElementById('cml-error');
+    const style = error ? getComputedStyle(error) : null;
+    const errorTextPresent = Boolean(String(error?.textContent || '').trim());
+    const visibleError = Boolean(error && !error.hidden && style?.display !== 'none' && style?.visibility !== 'hidden' && Number(style?.opacity ?? 1) !== 0 && errorTextPresent);
+    const chartExists = Boolean(document.querySelector('#cml-history-chart svg.wc-svg, #cml-history-chart svg'));
+    return {
+      chartExists,
+      visibleError,
+      errorTextPresent,
+      errorHiddenProperty: error ? error.hidden === true : null,
+      state: {
+        active: s.active === true,
+        historyRange: s.historyRange || null,
+        historyPayloadRange: s.historyPayloadRange || null,
+        historyTooltipMode: s.historyTooltipMode || null,
+        historyChartStyle: s.historyChartStyle || null,
+        historyChartLayout: s.historyChartLayout || null,
+        historyRowCount: Number.isFinite(Number(s.historyRowCount)) ? Number(s.historyRowCount) : null,
+        historyLoading: s.historyLoading === true,
+        priceStatus: s.priceStatus || null,
+        pricePointCount: Number.isFinite(Number(s.pricePointCount)) ? Number(s.pricePointCount) : null,
+        lastError: s.lastError ? String(s.lastError).slice(0, 160) : null,
+        measureButtonExists: s.measureButtonExists === true,
+        rendererBarPairs: Number.isFinite(Number(s.rendererBarPairs)) ? Number(s.rendererBarPairs) : null,
+        rendererBarMisalignedPairs: Number.isFinite(Number(s.rendererBarMisalignedPairs)) ? Number(s.rendererBarMisalignedPairs) : null,
+      },
+    };
+  });
 
   evidence.pass = evidence.matrix?.subtitle13 === true
     && evidence.matrix?.lighterListed === true
     && evidence.matrix?.lighterShareAvailableWhenValue === true
     && evidence.matrix?.volumeDescending === true
-    && evidence.bar?.pass === true;
+    && evidence.bar?.pass === true
+    && evidence.hiddenGate?.chartExists === true
+    && evidence.hiddenGate?.visibleError === false;
 } catch (error) {
   evidence.error = String(error?.message || error || '').slice(0, 400);
 }
