@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     env:
-      WA_PREVIEW_URL: https://8ae09501.wave-alpha.pages.dev/
+      WA_PREVIEW_URL: https://fbcafc56.wave-alpha.pages.dev/
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -23,5 +23,5 @@ jobs:
           node-version: "20"
       - run: npm install --no-save playwright@1.55.0
       - run: npx playwright install --with-deps chromium
-      - name: Run Lighter Share + Bar alignment proof
+      - name: Verify Lighter matrix + Dual Pressure + fresh bootstrap
         run: node scripts/liquidation-matrix-lighter-bar-preview-qa.mjs
