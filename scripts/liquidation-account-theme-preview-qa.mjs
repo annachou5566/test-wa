@@ -23,8 +23,6 @@ const evidence = {
   pass: false,
 };
 
-const forbiddenGuideTerms = /qualified set|official api|public channel|eventstore|degraded|snapshot liquidation/i;
-
 async function activateLiquidation(page) {
   await page.goto(`${target}/?liquidationTest=1`, { waitUntil: 'domcontentloaded', timeout: 45_000 });
   await page.waitForFunction(() => {
@@ -53,6 +51,25 @@ async function activateLiquidation(page) {
       && guide?.mounted === true
       && heatmap?.mounted === true
       && rootSync?.synced === true;
+  }, null, { timeout: 35_000, polling: 100 });
+
+  // Product readiness gate: the page-level loading overlay may outlive module mount.
+  // Wait until it cannot intercept pointer input and Liquidation history loading has settled.
+  await page.waitForFunction(() => {
+    const overlay = document.getElementById('loading-overlay');
+    let overlayClear = true;
+    if (overlay) {
+      const style = getComputedStyle(overlay);
+      const rect = overlay.getBoundingClientRect();
+      overlayClear = overlay.hidden
+        || style.display === 'none'
+        || style.visibility === 'hidden'
+        || style.pointerEvents === 'none'
+        || rect.width === 0
+        || rect.height === 0;
+    }
+    const audit = window.WaveCryptoLiquidation?.audit?.();
+    return overlayClear && audit?.active === true && audit?.historyLoading === false;
   }, null, { timeout: 35_000, polling: 100 });
 }
 
