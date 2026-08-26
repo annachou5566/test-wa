@@ -1,0 +1,27 @@
+name: Liquidation seeded desktop Hardcore Preview QA
+
+on:
+  push:
+    paths:
+      - "scripts/liquidation-hardcore-seeded-preview-qa.mjs"
+      - ".github/workflows/liquidation-hardcore-seeded-preview-qa.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  browser-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      WA_PREVIEW_URL: https://8ae09501.wave-alpha.pages.dev/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install --no-save playwright@1.55.0
+      - run: npx playwright install --with-deps chromium
+      - name: Run seeded desktop Hardcore proof
+        run: node scripts/liquidation-hardcore-seeded-preview-qa.mjs
