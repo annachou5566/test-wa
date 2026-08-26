@@ -215,6 +215,9 @@ try {
         lastError: source.lastError ? String(source.lastError).slice(0, 180) : null,
       },
       cacheName: resilience.cacheName || null,
+      exactDetailRetries: Number(resilience.exactDetailRetries || 0),
+      exactExchangeDetailSemanticGuard: resilience.exactExchangeDetailSemanticGuard === true,
+      exactExchangeDetailFailClosed: resilience.exactExchangeDetailFailClosed === true,
     };
   });
 
@@ -224,13 +227,16 @@ try {
   const githubRunnerBinanceBlock = Boolean(found && !found.hasPrice && priceResponses.some(item => item.route === 'same-origin-binance-spot-klines' && item.status >= 400));
   const priceGate = Boolean(found?.hasPrice || githubRunnerBinanceBlock);
   const tooltipPass = Boolean(found && found.visible && found.realExchangeRowCount > 0 && found.hasDate && priceGate && found.hasTotal && found.hasShort && found.hasLong && found.hasFooterTotal);
-  const cachePass = runtime.cacheName === 'wave-liquidation-read-v7';
+  const cachePass = runtime.cacheName === 'wave-liquidation-read-v8';
+  const semanticGuardPass = runtime.exactExchangeDetailSemanticGuard && runtime.exactExchangeDetailFailClosed;
 
   evidence.summary1d = summaryAudit;
   evidence.historyStatuses = historyResponses.map(item => ({ status: item.status, details: item.details || '0', cache: item.cache }));
   evidence.audit = runtime.audit;
   evidence.cacheName = runtime.cacheName;
   evidence.cacheNamespacePass = cachePass;
+  evidence.exactDetailRetries = runtime.exactDetailRetries;
+  evidence.semanticGuardPass = semanticGuardPass;
   evidence.detailRequest = response;
   evidence.exactDetailRequestObserved = exactRequestObserved;
   evidence.tooltip = found;
@@ -239,7 +245,7 @@ try {
   evidence.observedPointerFraction = foundFraction;
   evidence.positionsTried = fractions.length;
   evidence.priceTransport = priceResponses;
-  evidence.pass = summaryAudit.historyLoading === false && !summaryAudit.lastError && exactRequestObserved && tooltipPass && cachePass && !runtime.audit.lastError;
+  evidence.pass = summaryAudit.historyLoading === false && !summaryAudit.lastError && exactRequestObserved && tooltipPass && cachePass && semanticGuardPass && !runtime.audit.lastError;
 } catch (error) {
   evidence.error = String(error?.message || error || '').slice(0, 360);
   evidence.historyStatuses = historyResponses.map(item => ({ status: item.status, details: item.details || '0', cache: item.cache }));
