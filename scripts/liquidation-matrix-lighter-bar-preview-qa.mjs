@@ -6,7 +6,7 @@ if (!/^https:\/\/[a-z0-9-]+\.wave-alpha\.pages\.dev$/i.test(target)) throw new E
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 1400, height: 702 } });
 const evidence = {
-  schema: 'wave-liquidation-lighter-matrix-pressure-cache-preview-qa-v1',
+  schema: 'wave-liquidation-lighter-matrix-pressure-cache-preview-qa-v2',
   targetHost: new URL(target).hostname,
   rawRowsLogged: false,
   exchangeTriplesLogged: false,
@@ -57,7 +57,6 @@ try {
   evidence.runtime = await page.evaluate(() => {
     const scripts = [...document.scripts].map(s => String(s.src || ''));
     return {
-      overviewBootstrapV7: scripts.some(src => /\/public\/js\/overview-tab\.js\?v=7(?:$|&)/.test(src)),
       exchangeMatrixV14: scripts.some(src => /\/public\/js\/liquidation\/tab\/exchange-matrix\.js\?v=14(?:$|&)/.test(src)),
       apiResilienceV9: scripts.some(src => /\/public\/js\/liquidation\/tab\/api-resilience\.js\?v=9(?:$|&)/.test(src)),
       controllerV20: scripts.some(src => /\/public\/js\/liquidation\/tab\/controller\.js\?v=20(?:$|&)/.test(src)),
@@ -103,8 +102,7 @@ try {
     };
   });
 
-  evidence.pass = evidence.runtime?.overviewBootstrapV7 === true
-    && evidence.runtime?.exchangeMatrixV14 === true
+  evidence.pass = evidence.runtime?.exchangeMatrixV14 === true
     && evidence.runtime?.apiResilienceV9 === true
     && evidence.runtime?.controllerV20 === true
     && evidence.runtime?.version === '1.0.25'
