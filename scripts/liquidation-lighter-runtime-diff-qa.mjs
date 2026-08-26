@@ -7,14 +7,14 @@ const targets = [
 
 const browser = await chromium.launch({ headless: true });
 const evidence = {
-  schema: 'wave-liquidation-lighter-runtime-diff-qa-v1',
+  schema: 'wave-liquidation-lighter-runtime-diff-qa-v2',
   generatedAt: new Date().toISOString(),
   rawRowsLogged: false,
   exchangeTriplesLogged: false,
   priceValuesLogged: false,
   probes: [],
   probePass: false,
-  expectedRuntimeDivergenceObserved: false,
+  runtimeDivergenceObserved: false,
 };
 
 async function probe(target) {
@@ -73,6 +73,9 @@ async function probe(target) {
         source: payload?.source || null,
         storage: payload?.storage || null,
         contextTransport: payload?.diagnostics?.contextTransport || null,
+        contextVersion: payload?.diagnostics?.contextVersion || null,
+        qualifiedExchangeCount: Number(payload?.diagnostics?.qualifiedExchangeCount || 0) || null,
+        standaloneSelectableExchangeCount: Number(payload?.diagnostics?.standaloneSelectableExchangeCount || 0) || null,
         contextProjectionFallback: payload?.diagnostics?.contextProjectionFallback === true,
         rawSnapshotTransferred: payload?.diagnostics?.rawSnapshotTransferred ?? null,
         observedBuckets24hPositive: Number(payload?.diagnostics?.observedBuckets24h || 0) > 0,
@@ -102,22 +105,22 @@ for (const target of targets) evidence.probes.push(await probe(target));
 const preview = evidence.probes.find(item => item.name === 'accepted-preview');
 const production = evidence.probes.find(item => item.name === 'production');
 evidence.probePass = evidence.probes.every(item => item.ready === true);
-evidence.expectedRuntimeDivergenceObserved = Boolean(
+evidence.runtimeDivergenceObserved = Boolean(
   preview?.ready
   && production?.ready
   && preview.lighterPresent
   && preview.lighterHasEvents
   && preview.lighterTotalPositive
   && preview.lighterCountPositive
-  && production.lighterPresent
-  && !production.lighterHasEvents
-  && !production.lighterTotalPositive
-  && !production.lighterCountPositive,
+  && (!production.lighterPresent || !production.lighterHasEvents || !production.lighterTotalPositive || !production.lighterCountPositive),
 );
-
 evidence.sameSourceTransport = Boolean(
   preview?.contextTransport
   && preview.contextTransport === production?.contextTransport,
+);
+evidence.sameContextVersion = Boolean(
+  preview?.contextVersion
+  && preview.contextVersion === production?.contextVersion,
 );
 evidence.sameMatrixCount = Number.isFinite(preview?.matrixCount)
   && preview.matrixCount === production?.matrixCount;
