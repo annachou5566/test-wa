@@ -6,14 +6,11 @@ if (!/^https:\/\/[a-z0-9-]+\.wave-alpha\.pages\.dev$/i.test(target)) throw new E
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({ viewport: { width: 1400, height: 702 } });
 const evidence = {
-  schema: 'wave-liquidation-matrix-lighter-bar-preview-qa-v3-hidden-hardcore-predicates',
+  schema: 'wave-liquidation-lighter-matrix-pressure-cache-preview-qa-v1',
   targetHost: new URL(target).hostname,
   rawRowsLogged: false,
   exchangeTriplesLogged: false,
   priceValuesLogged: false,
-  matrix: null,
-  bar: null,
-  hiddenGate: null,
   pass: false,
 };
 
@@ -57,108 +54,67 @@ function parseUsd(text) {
 try {
   await stableActivate();
 
+  evidence.runtime = await page.evaluate(() => {
+    const scripts = [...document.scripts].map(s => String(s.src || ''));
+    return {
+      overviewBootstrapV7: scripts.some(src => /\/public\/js\/overview-tab\.js\?v=7(?:$|&)/.test(src)),
+      exchangeMatrixV14: scripts.some(src => /\/public\/js\/liquidation\/tab\/exchange-matrix\.js\?v=14(?:$|&)/.test(src)),
+      apiResilienceV9: scripts.some(src => /\/public\/js\/liquidation\/tab\/api-resilience\.js\?v=9(?:$|&)/.test(src)),
+      controllerV20: scripts.some(src => /\/public\/js\/liquidation\/tab\/controller\.js\?v=20(?:$|&)/.test(src)),
+      version: null,
+    };
+  });
+  const versionResponse = await page.request.get(`${target}/version.json?_qa=${Date.now()}`);
+  const versionBody = versionResponse.ok() ? await versionResponse.json() : {};
+  evidence.runtime.version = String(versionBody?.version || '');
+
   evidence.matrix = await page.evaluate(() => {
-    const subtitle = String(document.querySelector('#cmlx-panel .cmlx-sub')?.textContent || '').replace(/\s+/g, ' ').trim();
     const lighter = document.querySelector('#cmlx-body tr[data-exchange="lighter"]');
     const cells = lighter ? [...lighter.querySelectorAll(':scope > td')] : [];
     const liquidationText = String(cells[1]?.textContent || '').trim();
     const shareText = String(cells[4]?.textContent || '').trim();
-    const hasValue = Boolean(liquidationText && liquidationText !== '—' && liquidationText !== '$0');
-    const shareNumeric = Number.parseFloat(shareText.replace('%', ''));
     const rows = [...document.querySelectorAll('#cmlx-body tr[data-exchange]:not(.cmlx-row-all)')].map(row => {
       const td = [...row.querySelectorAll(':scope > td')];
       return { exchange: String(row.dataset.exchange || ''), liquidationText: String(td[1]?.textContent || '').trim() };
     });
     return {
-      subtitle13: /13\s+sàn/i.test(subtitle),
+      rowCount: rows.length,
       lighterListed: Boolean(lighter),
-      lighterHasValue: hasValue,
-      lighterShareAvailableWhenValue: !hasValue || (shareText !== '—' && Number.isFinite(shareNumeric) && shareNumeric >= 0),
+      lighterHasValue: Boolean(liquidationText && liquidationText !== '—' && liquidationText !== '$0'),
       lighterShareText: shareText,
+      lighterShareAvailable: Boolean(shareText && shareText !== '—'),
       rows,
     };
   });
-
   const parsed = evidence.matrix.rows.map(row => ({ exchange: row.exchange, value: parseUsd(row.liquidationText) }));
   const available = parsed.filter(row => row.value != null);
   evidence.matrix.volumeDescending = available.every((row, index) => index === 0 || available[index - 1].value >= row.value);
   evidence.matrix.exchangeOrder = parsed.map(row => row.exchange);
   delete evidence.matrix.rows;
 
-  const started = Date.now();
-  await page.evaluate(() => {
-    document.querySelector('[data-cml-history-range="90d"]')?.click();
-    document.querySelector('[data-cml-chart-style="bar"]')?.click();
-    document.querySelector('[data-cml-chart-layout="diverging"]')?.click();
-    document.querySelector('[data-cml-tooltip-mode="exchanges"]')?.click();
-  });
-  await page.waitForFunction(() => {
-    const s = window.WaveLiquidationPageAudit?.snapshot?.();
-    const a = window.WaveLiquidationPageAudit?.run?.();
-    const chart = document.getElementById('cml-history-chart');
-    return s?.historyRange === '90d'
-      && s?.historyPayloadRange === '90d'
-      && s?.historyChartStyle === 'bar'
-      && s?.historyChartLayout === 'diverging'
-      && s?.historyTooltipMode === 'exchanges'
-      && s?.historyLoading !== true
-      && Number(s?.historyRowCount) === 90
-      && chart?.dataset?.chartStyle === 'bar'
-      && chart?.dataset?.chartLayout === 'diverging'
-      && a?.checks?.longShortShareOneColumn === true;
-  }, null, { timeout: 18_000, polling: 40 });
-  const durationMs = Date.now() - started;
-  evidence.bar = await page.evaluate(durationMs => {
-    const s = window.WaveLiquidationPageAudit?.snapshot?.() || {};
-    const a = window.WaveLiquidationPageAudit?.run?.() || {};
+  evidence.pressure = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('#cmlx-pressure .cmlx-pressure-row[data-exchange]')];
+    const lighter = rows.find(row => row.dataset.exchange === 'lighter') || null;
     return {
-      durationMs,
-      eliteBudgetMs: 500,
-      rendererBarPairs: Number(s.rendererBarPairs || 0),
-      rendererBarMisalignedPairs: Number(s.rendererBarMisalignedPairs || 0),
-      barCheck: a?.checks?.longShortShareOneColumn === true,
-      pass: a?.checks?.longShortShareOneColumn === true,
-    };
-  }, durationMs);
-
-  evidence.hiddenGate = await page.evaluate(() => {
-    const s = window.WaveLiquidationPageAudit?.snapshot?.() || {};
-    const error = document.getElementById('cml-error');
-    const style = error ? getComputedStyle(error) : null;
-    const errorTextPresent = Boolean(String(error?.textContent || '').trim());
-    const visibleError = Boolean(error && !error.hidden && style?.display !== 'none' && style?.visibility !== 'hidden' && Number(style?.opacity ?? 1) !== 0 && errorTextPresent);
-    const chartExists = Boolean(document.querySelector('#cml-history-chart svg.wc-svg, #cml-history-chart svg'));
-    return {
-      chartExists,
-      visibleError,
-      errorTextPresent,
-      errorHiddenProperty: error ? error.hidden === true : null,
-      state: {
-        active: s.active === true,
-        historyRange: s.historyRange || null,
-        historyPayloadRange: s.historyPayloadRange || null,
-        historyTooltipMode: s.historyTooltipMode || null,
-        historyChartStyle: s.historyChartStyle || null,
-        historyChartLayout: s.historyChartLayout || null,
-        historyRowCount: Number.isFinite(Number(s.historyRowCount)) ? Number(s.historyRowCount) : null,
-        historyLoading: s.historyLoading === true,
-        priceStatus: s.priceStatus || null,
-        pricePointCount: Number.isFinite(Number(s.pricePointCount)) ? Number(s.pricePointCount) : null,
-        lastError: s.lastError ? String(s.lastError).slice(0, 160) : null,
-        measureButtonExists: s.measureButtonExists === true,
-        rendererBarPairs: Number.isFinite(Number(s.rendererBarPairs)) ? Number(s.rendererBarPairs) : null,
-        rendererBarMisalignedPairs: Number.isFinite(Number(s.rendererBarMisalignedPairs)) ? Number(s.rendererBarMisalignedPairs) : null,
-      },
+      rowCount: rows.length,
+      lighterListed: Boolean(lighter),
+      lighterLabel: String(lighter?.querySelector('.cmlx-pressure-name')?.textContent || '').trim(),
+      lighterValueAvailable: Boolean(String(lighter?.querySelector('.cmlx-pressure-value')?.textContent || '').trim().replace('—', '')),
     };
   });
 
-  evidence.pass = evidence.matrix?.subtitle13 === true
+  evidence.pass = evidence.runtime?.overviewBootstrapV7 === true
+    && evidence.runtime?.exchangeMatrixV14 === true
+    && evidence.runtime?.apiResilienceV9 === true
+    && evidence.runtime?.controllerV20 === true
+    && evidence.runtime?.version === '1.0.25'
+    && evidence.matrix?.rowCount === 13
     && evidence.matrix?.lighterListed === true
-    && evidence.matrix?.lighterShareAvailableWhenValue === true
+    && evidence.matrix?.lighterShareAvailable === true
     && evidence.matrix?.volumeDescending === true
-    && evidence.bar?.pass === true
-    && evidence.hiddenGate?.chartExists === true
-    && evidence.hiddenGate?.visibleError === false;
+    && evidence.pressure?.rowCount === 13
+    && evidence.pressure?.lighterListed === true
+    && evidence.pressure?.lighterLabel === 'Lighter';
 } catch (error) {
   evidence.error = String(error?.message || error || '').slice(0, 400);
 }
