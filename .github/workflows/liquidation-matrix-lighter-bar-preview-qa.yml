@@ -1,0 +1,27 @@
+name: Liquidation Matrix Lighter + Bar Preview QA
+
+on:
+  push:
+    paths:
+      - "scripts/liquidation-matrix-lighter-bar-preview-qa.mjs"
+      - ".github/workflows/liquidation-matrix-lighter-bar-preview-qa.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  browser-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      WA_PREVIEW_URL: https://862849bc.wave-alpha.pages.dev/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install --no-save playwright@1.55.0
+      - run: npx playwright install --with-deps chromium
+      - name: Run Lighter Share + Bar alignment proof
+        run: node scripts/liquidation-matrix-lighter-bar-preview-qa.mjs
