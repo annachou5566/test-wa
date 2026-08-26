@@ -14,7 +14,7 @@ const priceResponses = [];
 page.on('response', response => {
   try {
     const url = new URL(response.url());
-    if (url.pathname === '/api/liquidations/history' && url.searchParams.get('details') === '1') {
+    if (url.pathname === '/api/liquidations/history') {
       historyResponses.push({
         status: response.status(),
         range: url.searchParams.get('range'),
@@ -37,14 +37,31 @@ page.on('response', response => {
 });
 
 const evidence = {
-  schema: 'wave-liquidation-1d-tooltip-preview-qa-v4',
+  schema: 'wave-liquidation-1d-tooltip-preview-qa-v5-sequential-user-flow',
   targetHost: new URL(target).hostname,
   generatedAt: new Date().toISOString(),
   rawRowsLogged: false,
   exchangeTriplesLogged: false,
   priceValuesLogged: false,
+  userFlow: '1D Total settles -> Exchanges -> hover',
   pass: false,
 };
+
+async function waitForTotal1dReady() {
+  await page.waitForFunction(() => {
+    const audit = window.WaveLiquidationPageAudit?.snapshot?.();
+    return audit
+      && audit.active === true
+      && audit.historyRange === '1d'
+      && audit.historyPayloadRange === '1d'
+      && String(audit.historyPayloadSymbol || '').toUpperCase() === 'ALL'
+      && String(audit.historyPayloadExchange || '').toUpperCase() === 'ALL'
+      && audit.historyTooltipMode === 'summary'
+      && audit.historyLoading !== true
+      && !audit.lastError
+      && Number(audit.historyRowCount || 0) > 0;
+  }, null, { timeout: 25_000, polling: 80 });
+}
 
 async function waitForHistoryReady() {
   await page.waitForFunction(() => {
@@ -81,10 +98,28 @@ try {
   await page.waitForFunction(() => window.WaveLiquidationPageAudit?.snapshot?.()?.active === true, null, { timeout: 10_000, polling: 80 });
 
   await page.evaluate(() => {
+    const summary = document.querySelector('[data-cml-tooltip-mode="summary"]');
     const range = document.querySelector('[data-cml-history-range="1d"]');
-    const tooltip = document.querySelector('[data-cml-tooltip-mode="exchanges"]');
-    if (!range || !tooltip) throw new Error('1D/Exchange tooltip controls missing');
+    if (!range || !summary) throw new Error('1D/Total controls missing');
+    if (!summary.classList.contains('active')) summary.click();
     range.click();
+  });
+  await waitForTotal1dReady();
+
+  const summaryAudit = await page.evaluate(() => {
+    const a = window.WaveLiquidationPageAudit?.snapshot?.() || {};
+    return {
+      historyRange: a.historyRange || null,
+      historyTooltipMode: a.historyTooltipMode || null,
+      historyLoading: a.historyLoading === true,
+      lastError: a.lastError ? String(a.lastError).slice(0, 180) : null,
+      historyRowCount: Number(a.historyRowCount || 0),
+    };
+  });
+
+  await page.evaluate(() => {
+    const tooltip = document.querySelector('[data-cml-tooltip-mode="exchanges"]');
+    if (!tooltip) throw new Error('Exchange tooltip control missing');
     tooltip.click();
   });
   await waitForHistoryReady();
@@ -145,17 +180,12 @@ try {
           };
         }
       }
-
       const generic = document.querySelector('#cml-history-chart .wc-tip');
       let genericVisible = false;
       if (generic) {
         const style = getComputedStyle(generic);
         const rect = generic.getBoundingClientRect();
-        genericVisible = style.display !== 'none'
-          && style.visibility !== 'hidden'
-          && Number(style.opacity) !== 0
-          && rect.width > 0
-          && rect.height > 0;
+        genericVisible = style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0 && rect.width > 0 && rect.height > 0;
       }
       return { exchange, genericVisible };
     });
@@ -188,50 +218,31 @@ try {
     };
   });
 
-  const response = historyResponses.at(-1) || null;
-  const exactRequestObserved = Boolean(
-    response
-    && response.status === 200
-    && response.range === '1d'
-    && String(response.symbol || '').toUpperCase() === 'ALL'
-    && String(response.exchange || '').toUpperCase() === 'ALL'
-    && response.details === '1'
-  );
-  const githubRunnerBinanceBlock = Boolean(
-    found
-    && !found.hasPrice
-    && priceResponses.some(item => item.route === 'same-origin-binance-spot-klines' && item.status >= 400)
-  );
+  const detailResponses = historyResponses.filter(item => item.details === '1');
+  const response = detailResponses.at(-1) || null;
+  const exactRequestObserved = Boolean(response && response.status === 200 && response.range === '1d' && String(response.symbol || '').toUpperCase() === 'ALL' && String(response.exchange || '').toUpperCase() === 'ALL' && response.details === '1');
+  const githubRunnerBinanceBlock = Boolean(found && !found.hasPrice && priceResponses.some(item => item.route === 'same-origin-binance-spot-klines' && item.status >= 400));
   const priceGate = Boolean(found?.hasPrice || githubRunnerBinanceBlock);
-  const tooltipPass = Boolean(
-    found
-    && found.visible
-    && found.realExchangeRowCount > 0
-    && found.hasDate
-    && priceGate
-    && found.hasTotal
-    && found.hasShort
-    && found.hasLong
-    && found.hasFooterTotal
-  );
+  const tooltipPass = Boolean(found && found.visible && found.realExchangeRowCount > 0 && found.hasDate && priceGate && found.hasTotal && found.hasShort && found.hasLong && found.hasFooterTotal);
   const cachePass = runtime.cacheName === 'wave-liquidation-read-v7';
 
+  evidence.summary1d = summaryAudit;
+  evidence.historyStatuses = historyResponses.map(item => ({ status: item.status, details: item.details || '0', cache: item.cache }));
   evidence.audit = runtime.audit;
   evidence.cacheName = runtime.cacheName;
   evidence.cacheNamespacePass = cachePass;
   evidence.detailRequest = response;
   evidence.exactDetailRequestObserved = exactRequestObserved;
   evidence.tooltip = found;
-  evidence.priceGate = found?.hasPrice
-    ? 'product-price-observed'
-    : (githubRunnerBinanceBlock ? 'github-runner-binance-block' : 'failed');
+  evidence.priceGate = found?.hasPrice ? 'product-price-observed' : (githubRunnerBinanceBlock ? 'github-runner-binance-block' : 'failed');
   evidence.genericTooltipSeen = genericTooltipSeen;
   evidence.observedPointerFraction = foundFraction;
   evidence.positionsTried = fractions.length;
   evidence.priceTransport = priceResponses;
-  evidence.pass = exactRequestObserved && tooltipPass && cachePass && !runtime.audit.lastError;
+  evidence.pass = summaryAudit.historyLoading === false && !summaryAudit.lastError && exactRequestObserved && tooltipPass && cachePass && !runtime.audit.lastError;
 } catch (error) {
   evidence.error = String(error?.message || error || '').slice(0, 360);
+  evidence.historyStatuses = historyResponses.map(item => ({ status: item.status, details: item.details || '0', cache: item.cache }));
   evidence.priceTransport = priceResponses;
 }
 
