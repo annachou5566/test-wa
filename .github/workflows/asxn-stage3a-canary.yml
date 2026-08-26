@@ -1,0 +1,62 @@
+name: ASXN Stage3A persistent-browser canary
+
+on:
+  workflow_dispatch:
+    inputs:
+      duration_seconds:
+        description: "Bounded canary duration"
+        required: true
+        default: "7200"
+        type: choice
+        options:
+          - "300"
+          - "1800"
+          - "7200"
+  push:
+    branches: [main]
+    paths:
+      - "run/asxn-stage3a-canary.trigger"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: asxn-stage3a-persistent-browser-canary
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 135
+    env:
+      CANARY_DURATION_SECONDS: ${{ github.event_name == 'workflow_dispatch' && inputs.duration_seconds || '7200' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install bounded public-probe dependencies
+        run: python -m pip install --disable-pip-version-check playwright psutil
+
+      - name: Static compile and contract self-test
+        run: |
+          python -m py_compile scripts/asxn_stage3a_canary.py
+          python scripts/asxn_stage3a_canary.py --self-test
+
+      - name: Run bounded Stage3A canary
+        run: >-
+          python scripts/asxn_stage3a_canary.py
+          --duration-seconds "${CANARY_DURATION_SECONDS}"
+          --output artifacts/asxn-stage3a/summary.json
+
+      - name: Upload sanitized Stage3A evidence
+        if: always() && hashFiles('artifacts/asxn-stage3a/summary.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: asxn-stage3a-${{ github.run_id }}
+          path: artifacts/asxn-stage3a/summary.json
+          retention-days: 3
+          if-no-files-found: error
