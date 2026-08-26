@@ -3,7 +3,7 @@ name: Liquidation theme polish Preview QA
 on:
   push:
     paths:
-      - "scripts/liquidation-theme-polish-preview-qa.mjs"
+      - "scripts/liquidation-theme-polish-preview-qa-v2.mjs"
       - ".github/workflows/liquidation-theme-polish-preview-qa.yml"
   workflow_dispatch:
 
@@ -30,11 +30,11 @@ jobs:
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
       - name: Run Liquidation theme polish Preview QA
-        run: node scripts/liquidation-theme-polish-preview-qa.mjs
+        run: node scripts/liquidation-theme-polish-preview-qa-v2.mjs
       - name: Upload sanitized QA evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: liquidation-theme-polish-preview-qa
-          path: artifacts/liquidation-theme-polish-preview-qa
+          name: liquidation-theme-polish-preview-qa-v2
+          path: artifacts/liquidation-theme-polish-preview-qa-v2
           retention-days: 3
