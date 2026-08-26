@@ -1,0 +1,40 @@
+name: Liquidation theme polish Preview QA
+
+on:
+  push:
+    paths:
+      - "scripts/liquidation-theme-polish-preview-qa.mjs"
+      - ".github/workflows/liquidation-theme-polish-preview-qa.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: liquidation-theme-polish-preview-qa
+  cancel-in-progress: true
+
+jobs:
+  browser-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      WA_PREVIEW_URL: https://acef7b53.wave-alpha.pages.dev
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install Playwright
+        run: npm install --no-save playwright@1.55.0
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run Liquidation theme polish Preview QA
+        run: node scripts/liquidation-theme-polish-preview-qa.mjs
+      - name: Upload sanitized QA evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: liquidation-theme-polish-preview-qa
+          path: artifacts/liquidation-theme-polish-preview-qa
+          retention-days: 3
