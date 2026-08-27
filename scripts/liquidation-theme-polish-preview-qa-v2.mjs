@@ -21,7 +21,7 @@ async function activate(page) {
   await page.waitForFunction(() => typeof window.WaveCryptoLiquidation?.activate === 'function' && window.WaveCryptoLiquidation?.mounted === true, null, { timeout:30_000, polling:80 });
   await page.locator('#cm-btn-liquidation').click({ timeout:10_000 });
   await page.waitForFunction(() => {
-    const a=window.WaveCryptoLiquidation?.audit?.();
+    const a=window.WaveLiquidationPageAudit?.snapshot?.();
     return a?.active===true && window.WaveLiquidationThemeUiSyncAudit && window.WaveLiquidationHistoryDefaultsAudit && window.WaveLiquidationGuideAudit?.snapshot?.()?.mounted===true && window.WaveLiquidationExchangeHeatmapAudit?.snapshot?.()?.mounted===true;
   }, null, { timeout:35_000, polling:100 });
   await page.waitForFunction(() => (window.WaveLiquidationExchangeHeatmapAudit?.snapshot?.()?.exchangeRows||0)>0, null, { timeout:25_000, polling:120 }).catch(()=>{});
@@ -34,7 +34,7 @@ async function inspect(name, viewport) {
   try {
     await activate(page);
     result.initial=await page.evaluate(() => {
-      const a=window.WaveCryptoLiquidation?.audit?.()||{}, d=window.WaveLiquidationHistoryDefaultsAudit?.snapshot?.()||{}, s=window.WaveLiquidationThemeUiSyncAudit?.snapshot?.()||{};
+      const a=window.WaveLiquidationPageAudit?.snapshot?.()||{}, d=window.WaveLiquidationHistoryDefaultsAudit?.snapshot?.()||{}, s=window.WaveLiquidationThemeUiSyncAudit?.snapshot?.()||{};
       const guide=document.getElementById('cml-guide'), latest=document.getElementById('cml-guide-latest'), live=document.getElementById('cml-guide-snapshot'), body=guide?.querySelector('.cml-guide-card p');
       const fs=el=>el?parseFloat(getComputedStyle(el).fontSize||'0'):0;
       return { history:{tooltip:a.historyTooltipMode,style:a.historyChartStyle,layout:a.historyChartLayout}, defaults:d, sync:s, note:String(guide?.querySelector('.cml-guide-sub')?.textContent||'').trim(), fonts:{live:fs(live),latest:fs(latest),body:fs(body)}, latestWhiteSpace:latest?getComputedStyle(latest).whiteSpace:null, wavePicker:Boolean(window.WaveColorPicker?.open), qaConsolePresent:Boolean(document.getElementById('wa-liq-qa')) };
