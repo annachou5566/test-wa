@@ -10,14 +10,23 @@ const browser = await chromium.launch({ headless: true });
 const evidence = { schema:'wave-liquidation-theme-polish-preview-qa-v2', targetHost:new URL(target).hostname, generatedAt:new Date().toISOString(), rawRowsLogged:false, exchangeTriplesLogged:false, priceValuesLogged:false, accountSecretsLogged:false, desktop:null, mobile:null, pass:false };
 
 async function activate(page) {
-  await page.goto(`${target}/?liquidationTest=1`, { waitUntil:'domcontentloaded', timeout:45_000 });
-  // The public API object is installed before the Liquidation DOM mount can finish.
-  // Wait for mounted=true so activate() cannot race its intentional `if (!mounted) return` guard.
+  await page.goto(`${target}/`, { waitUntil:'domcontentloaded', timeout:45_000 });
   await page.waitForFunction(() => typeof window.CryptoMarket?.onTabActivated === 'function' && typeof window.WaveCryptoLiquidation?.activate === 'function' && window.WaveCryptoLiquidation?.mounted === true, null, { timeout:30_000, polling:80 });
-  await page.evaluate(() => {
-    const view=document.getElementById('crypto-market-view'); if(!view) throw new Error('crypto-market-view missing');
-    view.style.display='block'; window.CryptoMarket.onTabActivated(); window.WaveCryptoLiquidation.activate();
-  });
+  await page.waitForTimeout(350);
+  for (let attempt=0; attempt<2; attempt+=1) {
+    try {
+      await page.evaluate(() => {
+        const view=document.getElementById('crypto-market-view'); if(!view) throw new Error('crypto-market-view missing');
+        view.style.display='block'; window.CryptoMarket.onTabActivated(); window.WaveCryptoLiquidation.activate();
+      });
+      break;
+    } catch(error) {
+      if (!/Execution context was destroyed|navigation/i.test(String(error?.message||error)) || attempt===1) throw error;
+      await page.waitForLoadState('domcontentloaded').catch(()=>{});
+      await page.waitForFunction(() => typeof window.CryptoMarket?.onTabActivated === 'function' && typeof window.WaveCryptoLiquidation?.activate === 'function' && window.WaveCryptoLiquidation?.mounted === true, null, { timeout:30_000, polling:80 });
+      await page.waitForTimeout(350);
+    }
+  }
   await page.waitForFunction(() => {
     const a=window.WaveCryptoLiquidation?.audit?.();
     return a?.active===true && window.WaveLiquidationThemeUiSyncAudit && window.WaveLiquidationHistoryDefaultsAudit && window.WaveLiquidationGuideAudit?.snapshot?.()?.mounted===true && window.WaveLiquidationExchangeHeatmapAudit?.snapshot?.()?.mounted===true;
@@ -35,14 +44,15 @@ async function inspect(name, viewport) {
       const a=window.WaveCryptoLiquidation?.audit?.()||{}, d=window.WaveLiquidationHistoryDefaultsAudit?.snapshot?.()||{}, s=window.WaveLiquidationThemeUiSyncAudit?.snapshot?.()||{};
       const guide=document.getElementById('cml-guide'), latest=document.getElementById('cml-guide-latest'), live=document.getElementById('cml-guide-snapshot'), body=guide?.querySelector('.cml-guide-card p');
       const fs=el=>el?parseFloat(getComputedStyle(el).fontSize||'0'):0;
-      return { history:{tooltip:a.historyTooltipMode,style:a.historyChartStyle,layout:a.historyChartLayout}, defaults:d, sync:s, note:String(guide?.querySelector('.cml-guide-sub')?.textContent||'').trim(), fonts:{live:fs(live),latest:fs(latest),body:fs(body)}, latestWhiteSpace:latest?getComputedStyle(latest).whiteSpace:null, wavePicker:Boolean(window.WaveColorPicker?.open) };
+      return { history:{tooltip:a.historyTooltipMode,style:a.historyChartStyle,layout:a.historyChartLayout}, defaults:d, sync:s, note:String(guide?.querySelector('.cml-guide-sub')?.textContent||'').trim(), fonts:{live:fs(live),latest:fs(latest),body:fs(body)}, latestWhiteSpace:latest?getComputedStyle(latest).whiteSpace:null, wavePicker:Boolean(window.WaveColorPicker?.open), qaConsolePresent:Boolean(document.getElementById('wa-liq-qa')) };
     });
 
     await page.locator('#wa-liq-theme-trigger').click({timeout:10_000});
     result.panel=await page.evaluate(() => {
       const p=document.getElementById('wa-liq-theme-panel'), r=p?.getBoundingClientRect(); if(!p||!r||p.hidden) return {visible:false};
       const x=Math.min(innerWidth-4,Math.max(4,r.left+Math.min(60,r.width/2))), y=Math.min(innerHeight-4,Math.max(4,r.top+Math.min(60,r.height/2))), hit=document.elementFromPoint(x,y);
-      return {visible:true,z:getComputedStyle(p).zIndex,hitInside:Boolean(hit&&p.contains(hit)),nativeVisible:[...p.querySelectorAll('input[type="color"]')].some(el=>getComputedStyle(el).display!=='none'),paletteButtons:p.querySelectorAll('[data-wa-liq-palette]').length};
+      const toast=document.getElementById('wa-update-toast');
+      return {visible:true,z:getComputedStyle(p).zIndex,hitInside:Boolean(hit&&p.contains(hit)),nativeVisible:[...p.querySelectorAll('input[type="color"]')].some(el=>getComputedStyle(el).display!=='none'),paletteButtons:p.querySelectorAll('[data-wa-liq-palette]').length,toastZ:toast?getComputedStyle(toast).zIndex:null};
     });
 
     await page.locator('[data-wa-liq-palette="long"]').click({timeout:10_000});
@@ -63,7 +73,8 @@ async function inspect(name, viewport) {
     await page.screenshot({path:path.join(outDir,`${name}-top.png`),fullPage:false}); await page.locator('#cml-guide').scrollIntoViewIfNeeded(); await page.screenshot({path:path.join(outDir,`${name}-guide.png`),fullPage:false});
 
     const observed=Object.values(result.propagation||{}).filter(v=>v===true||v===false);
-    result.checks={syncLoaded:result.initial.sync?.installed===true,wavePickerOwner:result.initial.wavePicker===true&&result.initial.sync?.paletteOwner===true,internalNoteRemoved:result.initial.note===''&&result.initial.sync?.guideInternalNoteVisible===false,guideReadable:result.initial.fonts.live>=13&&result.initial.fonts.latest>=13&&result.initial.fonts.body>=13,desktopLatestNoWrap:name!=='desktop'||result.initial.latestWhiteSpace==='nowrap',historyDefaults:result.initial.history.tooltip==='exchanges'&&result.initial.history.style==='bar'&&result.initial.history.layout==='stacked',panelAbove:result.panel?.visible===true&&result.panel?.hitInside===true,nativePickerGone:result.panel?.nativeVisible===false&&result.panel?.paletteButtons===2,wavePickerOpens:result.wavePicker?.shown===true&&result.wavePicker?.overlay===true,traderTokens:result.propagation?.rootLong==='#0ECB81'&&result.propagation?.rootShort==='#F6465D',propagation:observed.length>=5&&observed.every(Boolean),fracture:result.fracture?.hero===true&&(result.fracture?.tile===true||result.fracture?.tile===null)};
+    const panelZ=Number(result.panel?.z||0), toastZ=Number(result.panel?.toastZ||0);
+    result.checks={syncLoaded:result.initial.sync?.installed===true,wavePickerOwner:result.initial.wavePicker===true&&result.initial.sync?.paletteOwner===true,qaConsoleAbsent:result.initial.qaConsolePresent===false,internalNoteRemoved:result.initial.note===''&&result.initial.sync?.guideInternalNoteVisible===false,guideReadable:result.initial.fonts.live>=13&&result.initial.fonts.latest>=13&&result.initial.fonts.body>=13,desktopLatestNoWrap:name!=='desktop'||result.initial.latestWhiteSpace==='nowrap',historyDefaults:result.initial.history.tooltip==='exchanges'&&result.initial.history.style==='bar'&&result.initial.history.layout==='stacked',panelAbove:result.panel?.visible===true&&result.panel?.hitInside===true&&(toastZ===0||panelZ>toastZ),nativePickerGone:result.panel?.nativeVisible===false&&result.panel?.paletteButtons===2,wavePickerOpens:result.wavePicker?.shown===true&&result.wavePicker?.overlay===true,traderTokens:result.propagation?.rootLong==='#0ECB81'&&result.propagation?.rootShort==='#F6465D',propagation:observed.length>=5&&observed.every(Boolean),fracture:result.fracture?.hero===true&&(result.fracture?.tile===true||result.fracture?.tile===null)};
     result.pass=Object.values(result.checks).every(Boolean);
   } catch(error){ result.error=String(error?.message||error||'').slice(0,500); }
   await context.close(); return result;
