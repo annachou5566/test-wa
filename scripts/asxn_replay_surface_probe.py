@@ -18,7 +18,7 @@ BASE = "https://api-hyperliquid.asxn.xyz/api/node/liquidations"
 OUTPUT = Path("artifacts/asxn-replay-surface/summary.json")
 MAX_RSS_BYTES = 2_500_000_000
 MAX_PROCESS_COUNT = 32
-CONTRACT = "ASXN_REPLAY_SURFACE_CAPABILITY_PROBE_V1"
+CONTRACT = "ASXN_REPLAY_SURFACE_CAPABILITY_PROBE_V2"
 
 
 class StopProbe(RuntimeError):
@@ -73,7 +73,7 @@ def order_of(times: list[datetime]) -> str:
     return "mixed"
 
 
-def fetch_variant(page, name: str, target: str, baseline: dict[str, Any] | None, summary: dict[str, Any]) -> dict[str, Any]:
+def fetch_variant(page, name: str, target: str, reference: dict[str, Any] | None, summary: dict[str, Any]) -> dict[str, Any]:
     status, raw, latency_ms = core.browser_fetch_json(page, target)
     core.observe_resource(summary)
     result: dict[str, Any] = {
@@ -87,9 +87,9 @@ def fetch_variant(page, name: str, target: str, baseline: dict[str, Any] | None,
         "window_span_seconds": None,
         "order": None,
         "fingerprint_digest": None,
-        "overlap_with_baseline": None,
-        "older_than_baseline_count": None,
-        "newer_than_baseline_count": None,
+        "overlap_with_reference": None,
+        "older_than_reference_count": None,
+        "newer_than_reference_count": None,
     }
     if status == 429:
         raise StopProbe("http_429_provider_pressure")
@@ -121,13 +121,13 @@ def fetch_variant(page, name: str, target: str, baseline: dict[str, Any] | None,
     result["_fps"] = fps
     result["_oldest"] = oldest
     result["_newest"] = newest
-    if baseline is not None:
-        base_fps: set[str] = baseline["_fps"]
-        base_oldest: datetime = baseline["_oldest"]
-        base_newest: datetime = baseline["_newest"]
-        result["overlap_with_baseline"] = len(fps & base_fps)
-        result["older_than_baseline_count"] = sum(1 for t in times if t < base_oldest)
-        result["newer_than_baseline_count"] = sum(1 for t in times if t > base_newest)
+    if reference is not None:
+        ref_fps: set[str] = reference["_fps"]
+        ref_oldest: datetime = reference["_oldest"]
+        ref_newest: datetime = reference["_newest"]
+        result["overlap_with_reference"] = len(fps & ref_fps)
+        result["older_than_reference_count"] = sum(1 for t in times if t < ref_oldest)
+        result["newer_than_reference_count"] = sum(1 for t in times if t > ref_newest)
     return result
 
 
@@ -135,46 +135,59 @@ def public_result(row: dict[str, Any]) -> dict[str, Any]:
     return {k: v for k, v in row.items() if not k.startswith("_")}
 
 
-def classify(baseline: dict[str, Any], results: list[dict[str, Any]]) -> dict[str, Any]:
-    by_name = {r["name"]: r for r in results}
-    limit_rows = [by_name.get("limit_200"), by_name.get("limit_500")]
-    larger = [r for r in limit_rows if r and r.get("http_status") == 200 and int(r.get("row_count") or 0) > 100]
+def effective_status(row: dict[str, Any]) -> int:
+    return int(row.get("http_status_after_reverify", row.get("http_status") or 0))
 
-    pagination_names = ("offset_100", "page_2", "before_oldest")
+
+def classify(baseline: dict[str, Any], asc100: dict[str, Any], results: list[dict[str, Any]]) -> dict[str, Any]:
+    by_name = {r["name"]: r for r in results}
+    historical_surface = (
+        effective_status(asc100) == 200
+        and int(asc100.get("row_count") or 0) > 0
+        and asc100.get("_newest") is not None
+        and baseline.get("_oldest") is not None
+        and asc100["_newest"] < baseline["_oldest"]
+    )
+
     pagination_candidates: list[str] = []
-    for name in pagination_names:
+    for name in ("asc_offset_100", "asc_page_2", "asc_skip_100"):
         r = by_name.get(name)
-        if not r or int(r.get("http_status_after_reverify", r.get("http_status") or 0)) != 200:
+        if not r or effective_status(r) != 200:
             continue
-        row_count = int(r.get("row_count") or 0)
-        older = int(r.get("older_than_baseline_count") or 0)
-        overlap = int(r.get("overlap_with_baseline") or 0)
-        # Require a strong older-window shift, not just normal newest-window drift.
-        if row_count >= 20 and older >= max(10, row_count // 4) and overlap <= row_count * 0.75:
+        count = int(r.get("row_count") or 0)
+        overlap = int(r.get("overlap_with_reference") or 0)
+        newer = int(r.get("newer_than_reference_count") or 0)
+        # Reference is asc100. A page/skip candidate must move materially forward
+        # from the earliest 100 instead of returning the same set.
+        if count >= 20 and overlap <= count * 0.75 and newer >= max(10, count // 4):
             pagination_candidates.append(name)
 
-    symbol_candidates = []
-    for name in ("btc_24h_200", "btc_all_500"):
-        r = by_name.get(name)
-        if r and int(r.get("row_count") or 0) > 100:
-            symbol_candidates.append(name)
+    limit_names = ("asc_limit_500", "asc_limit_1000", "asc_limit_2000", "desc_limit_2000")
+    honored_limits = [
+        name for name in limit_names
+        if by_name.get(name) and effective_status(by_name[name]) == 200 and int(by_name[name].get("row_count") or 0) >= int(name.split("_")[-1])
+    ]
+    max_rows_observed = max(
+        [int(r.get("row_count") or 0) for r in results if effective_status(r) == 200] or [0]
+    )
 
     if pagination_candidates:
-        classification = "REPLAY_OR_PAGINATION_CANDIDATE_OBSERVED"
-    elif larger:
-        classification = "LARGER_NEWEST_N_WINDOW_OBSERVED_NO_REPLAY_PROOF"
-    elif symbol_candidates:
-        classification = "SYMBOL_HISTORY_SURFACE_OBSERVED_NO_GLOBAL_REPLAY_PROOF"
+        classification = "HISTORICAL_RETENTION_PLUS_PAGINATION_CANDIDATE_OBSERVED"
+    elif historical_surface:
+        classification = "HISTORICAL_RETENTION_OBSERVED_NO_PAGE_OR_CURSOR_PROOF"
     else:
-        classification = "NO_REPLAY_OR_PAGINATION_SEMANTICS_PROVEN"
+        classification = "NO_DETERMINISTIC_HISTORICAL_RETRIEVAL_PROVEN"
 
     return {
         "classification": classification,
+        "historical_retention_surface_observed": historical_surface,
         "pagination_candidates": pagination_candidates,
-        "larger_limit_variants": [r["name"] for r in larger],
-        "symbol_history_candidates": symbol_candidates,
-        "baseline_row_count": baseline.get("row_count"),
-        "truth_limit": "A larger limit is not replay. Only deterministic older-page/cursor/range retrieval can bridge turnover; this probe is capability discovery, not completeness qualification.",
+        "honored_large_limit_variants": honored_limits,
+        "max_rows_observed_in_one_response": max_rows_observed,
+        "baseline_oldest_ts": baseline.get("oldest_ts"),
+        "earliest_surface_oldest_ts": asc100.get("oldest_ts"),
+        "earliest_surface_newest_ts": asc100.get("newest_ts"),
+        "truth_limit": "Ascending timestamp sort can prove retained old events, but without deterministic page/cursor/range traversal it cannot bridge the middle of history or repair newest-N turnover. Large one-shot limits are capacity observations, not replay semantics.",
     }
 
 
@@ -209,28 +222,36 @@ def main() -> None:
                 verified_at, verify_ms = core.verify_same_context(page, summary, reason="initial")
                 summary["verified_at"] = iso(verified_at)
                 summary["initial_verify_latency_ms"] = round(verify_ms, 3)
-                baseline = fetch_variant(page, "baseline", BASE, None, summary)
-                if int(baseline.get("http_status_after_reverify", baseline.get("http_status") or 0)) != 200:
-                    raise StopProbe("baseline_not_http_200")
-                if baseline.get("schema_exact") is not True:
-                    raise StopProbe("baseline_schema_invalid")
 
-                variants: list[tuple[str, str]] = [
-                    ("limit_200", url(limit=200)),
-                    ("limit_500", url(limit=500)),
-                    ("sort_timestamp_desc", url(sort_by="timestamp_utc", sort_order="desc", limit=100)),
-                    ("sort_timestamp_asc", url(sort_by="timestamp_utc", sort_order="asc", limit=100)),
-                    ("offset_100", url(offset=100, limit=100)),
-                    ("page_2", url(page=2, limit=100)),
-                    ("before_oldest", url(before=baseline["oldest_ts"], limit=100)),
-                    ("btc_24h_200", url("/BTC", limit=200, timeframe="24h")),
-                    ("btc_all_500", url("/BTC", limit=500, timeframe="all")),
+                baseline = fetch_variant(page, "baseline", BASE, None, summary)
+                if effective_status(baseline) != 200 or baseline.get("schema_exact") is not True:
+                    raise StopProbe("baseline_invalid")
+
+                asc100 = fetch_variant(
+                    page,
+                    "asc_limit_100",
+                    url(sort_by="timestamp_utc", sort_order="asc", limit=100),
+                    baseline,
+                    summary,
+                )
+                if effective_status(asc100) != 200 or asc100.get("schema_exact") is not True:
+                    raise StopProbe("ascending_history_surface_invalid")
+
+                results = [baseline, asc100]
+                variants: list[tuple[str, str, dict[str, Any]]] = [
+                    ("asc_limit_500", url(sort_by="timestamp_utc", sort_order="asc", limit=500), asc100),
+                    ("asc_limit_1000", url(sort_by="timestamp_utc", sort_order="asc", limit=1000), asc100),
+                    ("asc_limit_2000", url(sort_by="timestamp_utc", sort_order="asc", limit=2000), asc100),
+                    ("desc_limit_2000", url(sort_by="timestamp_utc", sort_order="desc", limit=2000), baseline),
+                    ("asc_offset_100", url(sort_by="timestamp_utc", sort_order="asc", limit=100, offset=100), asc100),
+                    ("asc_page_2", url(sort_by="timestamp_utc", sort_order="asc", limit=100, page=2), asc100),
+                    ("asc_skip_100", url(sort_by="timestamp_utc", sort_order="asc", limit=100, skip=100), asc100),
                 ]
-                results = [baseline]
-                for name, target in variants:
-                    results.append(fetch_variant(page, name, target, baseline, summary))
+                for name, target, reference in variants:
+                    results.append(fetch_variant(page, name, target, reference, summary))
+
                 summary["results"] = [public_result(r) for r in results]
-                summary["decision"] = classify(baseline, results)
+                summary["decision"] = classify(baseline, asc100, results)
                 summary["status"] = "CAPABILITY_PROBE_COMPLETE"
             finally:
                 context.close()
@@ -247,7 +268,6 @@ def main() -> None:
         summary["ended_at"] = iso(datetime.now(timezone.utc))
         OUTPUT.parent.mkdir(parents=True, exist_ok=True)
         OUTPUT.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
-        # Sanitized summary only. No raw events or auth material.
         print(json.dumps(summary, indent=2, sort_keys=True))
     raise SystemExit(exit_code)
 
