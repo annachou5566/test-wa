@@ -11,22 +11,15 @@ const evidence = { schema:'wave-liquidation-theme-polish-preview-qa-v2', targetH
 
 async function activate(page) {
   await page.goto(`${target}/`, { waitUntil:'domcontentloaded', timeout:45_000 });
-  await page.waitForFunction(() => typeof window.CryptoMarket?.onTabActivated === 'function' && typeof window.WaveCryptoLiquidation?.activate === 'function' && window.WaveCryptoLiquidation?.mounted === true, null, { timeout:30_000, polling:80 });
-  await page.waitForTimeout(350);
-  for (let attempt=0; attempt<2; attempt+=1) {
-    try {
-      await page.evaluate(() => {
-        const view=document.getElementById('crypto-market-view'); if(!view) throw new Error('crypto-market-view missing');
-        view.style.display='block'; window.CryptoMarket.onTabActivated(); window.WaveCryptoLiquidation.activate();
-      });
-      break;
-    } catch(error) {
-      if (!/Execution context was destroyed|navigation/i.test(String(error?.message||error)) || attempt===1) throw error;
-      await page.waitForLoadState('domcontentloaded').catch(()=>{});
-      await page.waitForFunction(() => typeof window.CryptoMarket?.onTabActivated === 'function' && typeof window.WaveCryptoLiquidation?.activate === 'function' && window.WaveCryptoLiquidation?.mounted === true, null, { timeout:30_000, polling:80 });
-      await page.waitForTimeout(350);
-    }
-  }
+  await page.waitForFunction(() => typeof window.pluginSwitchTab === 'function' && typeof window.CryptoMarket?.onTabActivated === 'function', null, { timeout:30_000, polling:80 });
+  await page.waitForFunction(() => Boolean(document.getElementById('crypto-market-view')), null, { timeout:30_000, polling:80 });
+  await page.evaluate(() => window.pluginSwitchTab('crypto', true));
+  await page.waitForFunction(() => {
+    const view=document.getElementById('crypto-market-view');
+    return Boolean(view && getComputedStyle(view).display !== 'none' && document.getElementById('cm-btn-liquidation'));
+  }, null, { timeout:30_000, polling:80 });
+  await page.waitForFunction(() => typeof window.WaveCryptoLiquidation?.activate === 'function' && window.WaveCryptoLiquidation?.mounted === true, null, { timeout:30_000, polling:80 });
+  await page.locator('#cm-btn-liquidation').click({ timeout:10_000 });
   await page.waitForFunction(() => {
     const a=window.WaveCryptoLiquidation?.audit?.();
     return a?.active===true && window.WaveLiquidationThemeUiSyncAudit && window.WaveLiquidationHistoryDefaultsAudit && window.WaveLiquidationGuideAudit?.snapshot?.()?.mounted===true && window.WaveLiquidationExchangeHeatmapAudit?.snapshot?.()?.mounted===true;
