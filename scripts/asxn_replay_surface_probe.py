@@ -7,19 +7,19 @@ import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 from playwright.sync_api import sync_playwright
 
 import asxn_stage3a_canary as core
 
 HOST = "https://api-hyperliquid.asxn.xyz"
-OPENAPI_CANDIDATES = (
-    HOST + "/openapi.json",
-    HOST + "/api/openapi.json",
-    HOST + "/docs/openapi.json",
-)
 OUTPUT = Path("artifacts/asxn-replay-surface/summary.json")
-CONTRACT = "ASXN_API_CONTRACT_DISCOVERY_PROBE_V3"
+CONTRACT = "ASXN_S3_DATE_ARCHIVE_CAPABILITY_PROBE_V4"
+PROBES = (
+    ("btc_recent_day", "BTC", "2026-08-26"),
+    ("btc_earliest_observed_day", "BTC", "2025-10-30"),
+)
 
 
 class StopProbe(RuntimeError):
@@ -30,76 +30,92 @@ def iso(dt: datetime | None) -> str | None:
     return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z") if dt else None
 
 
-def effective_fetch(page, target: str, summary: dict[str, Any]) -> tuple[int, Any | None, float]:
-    status, data, latency_ms = core.browser_fetch_json(page, target)
+def target(symbol: str, day: str) -> str:
+    return f"{HOST}/api/s3-liquidations/{symbol}?" + urlencode({"date": day})
+
+
+def effective_fetch(page, url: str, summary: dict[str, Any]) -> tuple[int, Any | None, float]:
+    status, data, latency_ms = core.browser_fetch_json(page, url)
     core.observe_resource(summary)
     if status == 429:
         raise StopProbe("http_429_provider_pressure")
     if status == 403:
-        core.verify_same_context(page, summary, reason="openapi_403")
-        status, data, latency_ms = core.browser_fetch_json(page, target)
+        core.verify_same_context(page, summary, reason="s3_archive_403")
+        status, data, latency_ms = core.browser_fetch_json(page, url)
         core.observe_resource(summary)
         if status == 429:
             raise StopProbe("http_429_provider_pressure")
     return status, data, latency_ms
 
 
-def parameter_summary(parameter: Any) -> dict[str, Any] | None:
-    if not isinstance(parameter, dict):
-        return None
-    name = parameter.get("name")
-    location = parameter.get("in")
-    if not isinstance(name, str) or not isinstance(location, str):
-        return None
-    schema = parameter.get("schema") if isinstance(parameter.get("schema"), dict) else {}
+def exact_event_rows(rows: Any) -> tuple[bool, int, str | None, str | None, bool | None]:
+    if not isinstance(rows, list) or not rows:
+        return False, len(rows) if isinstance(rows, list) else 0, None, None, None
+    if not all(isinstance(row, dict) for row in rows):
+        return False, len(rows), None, None, None
+    exact = all(set(row.keys()) == core.EVENT_KEYS for row in rows)
+    timestamps: list[datetime] = []
+    if exact:
+        for row in rows:
+            parsed = core.parse_iso(row.get("timestamp_utc"))
+            if parsed is None:
+                exact = False
+                break
+            timestamps.append(parsed)
+    if not exact or not timestamps:
+        return False, len(rows), None, None, None
+    oldest = min(timestamps)
+    newest = max(timestamps)
+    monotonic_desc = all(a >= b for a, b in zip(timestamps, timestamps[1:]))
+    return True, len(rows), iso(oldest), iso(newest), monotonic_desc
+
+
+def describe_payload(data: Any, requested_day: str) -> dict[str, Any]:
     out: dict[str, Any] = {
-        "name": name,
-        "in": location,
-        "required": bool(parameter.get("required")),
+        "json_type": type(data).__name__,
+        "top_level_keys": [],
+        "list_count": None,
+        "item_keys": [],
+        "exact_event_schema": False,
+        "oldest_ts": None,
+        "newest_ts": None,
+        "timestamps_descending": None,
+        "all_timestamps_within_requested_utc_day": None,
+        "nested_lists": {},
     }
-    for key in ("type", "format", "default", "minimum", "maximum"):
-        value = schema.get(key)
-        if isinstance(value, (str, int, float, bool)) or value is None:
-            if value is not None:
-                out[key] = value
-    enum = schema.get("enum")
-    if isinstance(enum, list) and len(enum) <= 20 and all(isinstance(v, (str, int, float, bool)) for v in enum):
-        out["enum"] = enum
-    return out
 
+    candidate_lists: list[tuple[str, list[Any]]] = []
+    if isinstance(data, list):
+        out["list_count"] = len(data)
+        candidate_lists.append(("$", data))
+        if data and isinstance(data[0], dict):
+            out["item_keys"] = sorted(data[0].keys())
+    elif isinstance(data, dict):
+        out["top_level_keys"] = sorted(data.keys())
+        for key, value in data.items():
+            if isinstance(value, list):
+                meta: dict[str, Any] = {"count": len(value), "item_keys": []}
+                if value and isinstance(value[0], dict):
+                    meta["item_keys"] = sorted(value[0].keys())
+                out["nested_lists"][key] = meta
+                candidate_lists.append((key, value))
 
-def extract_liquidation_contract(document: Any) -> dict[str, Any] | None:
-    if not isinstance(document, dict):
-        return None
-    paths = document.get("paths")
-    if not isinstance(paths, dict):
-        return None
-    relevant: dict[str, Any] = {}
-    for path, path_item in paths.items():
-        if not isinstance(path, str) or "liquidat" not in path.lower() or not isinstance(path_item, dict):
+    for list_name, rows in candidate_lists:
+        exact, count, oldest, newest, desc = exact_event_rows(rows)
+        if not exact:
             continue
-        path_params = path_item.get("parameters") if isinstance(path_item.get("parameters"), list) else []
-        methods: dict[str, Any] = {}
-        for method, operation in path_item.items():
-            if method.lower() not in {"get", "post", "put", "patch", "delete", "options", "head"}:
-                continue
-            if not isinstance(operation, dict):
-                continue
-            params = list(path_params)
-            if isinstance(operation.get("parameters"), list):
-                params.extend(operation["parameters"])
-            sanitized = [p for p in (parameter_summary(p) for p in params) if p is not None]
-            methods[method.upper()] = {
-                "operation_id": operation.get("operationId") if isinstance(operation.get("operationId"), str) else None,
-                "parameters": sanitized,
-            }
-        relevant[path] = methods
-    info = document.get("info") if isinstance(document.get("info"), dict) else {}
-    return {
-        "info_title": info.get("title") if isinstance(info.get("title"), str) else None,
-        "info_version": info.get("version") if isinstance(info.get("version"), str) else None,
-        "liquidation_paths": relevant,
-    }
+        out["exact_event_schema"] = True
+        out["event_list_location"] = list_name
+        out["list_count"] = count
+        out["oldest_ts"] = oldest
+        out["newest_ts"] = newest
+        out["timestamps_descending"] = desc
+        day_prefix = requested_day + "T"
+        out["all_timestamps_within_requested_utc_day"] = bool(
+            oldest and newest and oldest.startswith(day_prefix) and newest.startswith(day_prefix)
+        )
+        break
+    return out
 
 
 def main() -> None:
@@ -112,10 +128,11 @@ def main() -> None:
         "cookies_persisted": False,
         "tokens_persisted": False,
         "browser_profile_persisted": False,
-        "candidate_count": len(OPENAPI_CANDIDATES),
+        "provider_contract_basis": "/openapi.json exposed GET /api/s3-liquidations/{symbol} with optional query parameter date",
+        "probe_count": len(PROBES),
         "results": [],
     }
-    profile = Path(tempfile.mkdtemp(prefix="asxn-openapi-profile-"))
+    profile = Path(tempfile.mkdtemp(prefix="asxn-s3-archive-profile-"))
     os.chmod(profile, 0o700)
     exit_code = 0
     try:
@@ -134,46 +151,46 @@ def main() -> None:
                 verified_at, verify_ms = core.verify_same_context(page, summary, reason="initial")
                 summary["verified_at"] = iso(verified_at)
                 summary["initial_verify_latency_ms"] = round(verify_ms, 3)
-                found: list[dict[str, Any]] = []
-                for target in OPENAPI_CANDIDATES:
-                    status, data, latency_ms = effective_fetch(page, target, summary)
-                    contract = extract_liquidation_contract(data) if status == 200 else None
+
+                for name, symbol, day in PROBES:
+                    status, data, latency_ms = effective_fetch(page, target(symbol, day), summary)
                     row = {
-                        "candidate_path": target.removeprefix(HOST),
+                        "name": name,
+                        "symbol": symbol,
+                        "requested_date": day,
                         "http_status": status,
                         "latency_ms": round(latency_ms, 3),
-                        "json_object": isinstance(data, dict),
-                        "liquidation_contract_found": bool(contract and contract.get("liquidation_paths")),
                     }
-                    if contract and contract.get("liquidation_paths"):
-                        row["contract"] = contract
-                        found.append(row)
+                    if status == 200:
+                        row["payload"] = describe_payload(data, day)
                     summary["results"].append(row)
-                if found:
-                    names = sorted({
-                        p.get("name")
-                        for row in found
-                        for methods in row["contract"]["liquidation_paths"].values()
-                        for operation in methods.values()
-                        for p in operation.get("parameters", [])
-                        if isinstance(p, dict) and isinstance(p.get("name"), str)
-                    })
-                    replayish = [name for name in names if any(token in name.lower() for token in (
-                        "cursor", "offset", "page", "skip", "before", "after", "start", "end", "from", "to", "timestamp", "time"
-                    ))]
-                    summary["decision"] = {
-                        "classification": "OPENAPI_LIQUIDATION_CONTRACT_FOUND",
-                        "query_parameter_names": names,
-                        "replay_or_range_like_parameter_names": replayish,
-                        "truth_limit": "OpenAPI metadata is capability evidence only. Any candidate replay/range parameter still requires bounded behavioral proof before it can repair event continuity.",
-                    }
+
+                exact_rows = [
+                    row for row in summary["results"]
+                    if row.get("http_status") == 200
+                    and isinstance(row.get("payload"), dict)
+                    and row["payload"].get("exact_event_schema") is True
+                    and int(row["payload"].get("list_count") or 0) > 0
+                ]
+                date_exact = [
+                    row for row in exact_rows
+                    if row["payload"].get("all_timestamps_within_requested_utc_day") is True
+                ]
+                old_available = any(row["name"] == "btc_earliest_observed_day" for row in date_exact)
+
+                if date_exact:
+                    classification = "DATE_SCOPED_S3_EVENT_ARCHIVE_REPLAY_CANDIDATE"
+                elif any(row.get("http_status") == 200 for row in summary["results"]):
+                    classification = "S3_DATE_SURFACE_OBSERVED_SCHEMA_NOT_EVENT_MATCH"
                 else:
-                    summary["decision"] = {
-                        "classification": "NO_PUBLIC_OPENAPI_LIQUIDATION_CONTRACT_FOUND",
-                        "query_parameter_names": [],
-                        "replay_or_range_like_parameter_names": [],
-                        "truth_limit": "No public OpenAPI contract was discovered at the bounded candidate paths. Do not infer that undocumented parameters do not exist; stop blind parameter hunting unless new provider/source evidence appears.",
-                    }
+                    classification = "S3_DATE_ROUTE_UNAVAILABLE"
+
+                summary["decision"] = {
+                    "classification": classification,
+                    "exact_date_scoped_event_probes": [row["name"] for row in date_exact],
+                    "old_date_archive_observed": old_available,
+                    "truth_limit": "A date-scoped S3 event response can be a replay candidate, but whole-exchange completeness still requires archive-day boundary semantics, symbol universe coverage, deterministic repeatability, revision/finality behavior, and prospective continuity reconciliation. This probe does not authorize Production.",
+                }
                 summary["status"] = "CAPABILITY_PROBE_COMPLETE"
             finally:
                 context.close()
