@@ -14,15 +14,30 @@ const page = await context.newPage();
 const pageErrors = [];
 page.on('pageerror', error => { if (pageErrors.length < 8) pageErrors.push(String(error?.message || error).slice(0, 240)); });
 
+async function waitMountedAndActivate() {
+  await page.waitForFunction(() => typeof window.CryptoMarket?.onTabActivated === 'function' && typeof window.WaveCryptoLiquidation?.activate === 'function' && window.WaveCryptoLiquidation?.mounted === true, null, { timeout: 30_000, polling: 80 });
+  await page.waitForTimeout(350);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await page.evaluate(() => {
+        const view = document.getElementById('crypto-market-view');
+        if (!view) throw new Error('crypto-market-view missing');
+        view.style.display = 'block';
+        window.CryptoMarket.onTabActivated();
+        window.WaveCryptoLiquidation.activate();
+      });
+      return;
+    } catch (error) {
+      if (!/Execution context was destroyed|navigation/i.test(String(error?.message || error)) || attempt === 1) throw error;
+      await page.waitForLoadState('domcontentloaded').catch(() => {});
+      await page.waitForFunction(() => typeof window.CryptoMarket?.onTabActivated === 'function' && typeof window.WaveCryptoLiquidation?.activate === 'function' && window.WaveCryptoLiquidation?.mounted === true, null, { timeout: 30_000, polling: 80 });
+      await page.waitForTimeout(350);
+    }
+  }
+}
+
 await page.goto(`${target}/?liquidationTest=1`, { waitUntil: 'domcontentloaded', timeout: 45_000 });
-await page.waitForFunction(() => typeof window.CryptoMarket?.onTabActivated === 'function' && typeof window.WaveCryptoLiquidation?.activate === 'function' && window.WaveCryptoLiquidation?.mounted === true, null, { timeout: 30_000, polling: 80 });
-await page.evaluate(() => {
-  const view = document.getElementById('crypto-market-view');
-  if (!view) throw new Error('crypto-market-view missing');
-  view.style.display = 'block';
-  window.CryptoMarket.onTabActivated();
-  window.WaveCryptoLiquidation.activate();
-});
+await waitMountedAndActivate();
 await page.waitForFunction(() => window.WaveCryptoLiquidation?.audit?.()?.active === true && window.WaveLiquidationThemeUiSyncAudit, null, { timeout: 35_000, polling: 100 });
 await page.locator('#wa-liq-theme-trigger').click({ timeout: 10_000 });
 await page.waitForTimeout(150);
