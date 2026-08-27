@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - "scripts/liquidation-theme-polish-preview-qa-v2.mjs"
+      - "scripts/liquidation-mobile-swatch-hit-diagnostic.mjs"
       - ".github/workflows/liquidation-theme-polish-preview-qa.yml"
   workflow_dispatch:
 
@@ -29,12 +30,12 @@ jobs:
         run: npm install --no-save playwright@1.55.0
       - name: Install Chromium
         run: npx playwright install --with-deps chromium
-      - name: Run Liquidation theme polish Preview QA
-        run: node scripts/liquidation-theme-polish-preview-qa-v2.mjs
+      - name: Diagnose mobile swatch interception
+        run: node scripts/liquidation-mobile-swatch-hit-diagnostic.mjs
       - name: Upload sanitized QA evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: liquidation-theme-polish-preview-qa-v2
-          path: artifacts/liquidation-theme-polish-preview-qa-v2
+          name: liquidation-mobile-swatch-hit-diagnostic
+          path: artifacts/liquidation-mobile-swatch-hit-diagnostic
           retention-days: 3
