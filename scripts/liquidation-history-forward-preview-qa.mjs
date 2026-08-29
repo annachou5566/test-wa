@@ -13,10 +13,6 @@ const expectedMembers = new Set([
 ]);
 const forwardDates = ['2026-08-25', '2026-08-26', '2026-08-27', '2026-08-28', '2026-08-29'];
 const ranges = ['7d', '30d', '90d', 'all'];
-const validTriple = value => Array.isArray(value)
-  && value.length >= 3
-  && value.slice(0, 3).every(item => Number.isSafeInteger(Number(item)) && Number(item) >= 0)
-  && Math.abs(Number(value[0]) + Number(value[1]) - Number(value[2])) <= 1;
 const setEqual = (left, right) => left.size === right.size && [...left].every(value => right.has(value));
 
 const browser = await chromium.launch({ headless: true });
@@ -49,7 +45,8 @@ try {
   await page.goto(`${target}/`, { waitUntil: 'domcontentloaded', timeout: 45_000 });
 
   const rangeResults = await page.evaluate(async inputRanges => {
-    const run = async range => {
+    const out = [];
+    for (const range of inputRanges) {
       const started = performance.now();
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 12_000);
@@ -69,7 +66,7 @@ try {
               realtimeRange: body.historySourceStatus.realtimeRange == null ? null : String(body.historySourceStatus.realtimeRange),
             }
           : null;
-        return {
+        out.push({
           range,
           http: response.status,
           elapsedMs: Math.round(performance.now() - started),
@@ -90,20 +87,27 @@ try {
           nosniff: response.headers.get('x-content-type-options'),
           robots: response.headers.get('x-robots-tag'),
           error: body?.error ? String(body.error).slice(0, 120) : null,
-        };
+        });
       } catch (error) {
-        return { range, http: 0, elapsedMs: Math.round(performance.now() - started), error: String(error?.name || error || 'fetch-error') };
+        out.push({
+          range,
+          http: 0,
+          elapsedMs: Math.round(performance.now() - started),
+          error: String(error?.name || error || 'fetch-error'),
+        });
       } finally {
         clearTimeout(timer);
       }
-    };
-    const out = [];
-    for (const range of inputRanges) out.push(await run(range));
+    }
     return out;
   }, ranges);
 
   for (const result of rangeResults) {
     const memberSet = new Set(result.aggregateMembers || []);
+    const securityHeadersPass = String(result.cacheControl || '').includes('no-store')
+      && result.corp === 'same-origin'
+      && result.nosniff === 'nosniff'
+      && String(result.robots || '').includes('noindex');
     const rangePass = result.http === 200
       && result.schema === 'wave-liquidation-daily-chart-v1'
       && Number.isInteger(result.rowCount)
@@ -116,10 +120,7 @@ try {
       && result.standaloneExcludedFromAll?.includes('lighter')
       && result.historyStatus?.realtime === 'ok'
       && result.historyStatus?.hyperliquid === 'ok'
-      && String(result.cacheControl || '').includes('no-store')
-      && result.corp === 'same-origin'
-      && result.nosniff === 'nosniff'
-      && String(result.robots || '').includes('noindex');
+      && securityHeadersPass;
     if (!rangePass) failed = true;
     evidence.ranges.push({
       range: result.range,
@@ -132,16 +133,23 @@ try {
       historyAggregateComplete: result.historyAggregateComplete,
       historyStatus: result.historyStatus,
       projection: result.projection,
-      securityHeadersPass: String(result.cacheControl || '').includes('no-store')
-        && result.corp === 'same-origin'
-        && result.nosniff === 'nosniff'
-        && String(result.robots || '').includes('noindex'),
+      securityHeadersPass,
       pass: rangePass,
       error: result.error || null,
     });
   }
 
   const dayResults = await page.evaluate(async dates => {
+    const aliases = {
+      'binance-usdm': 'binance', 'bybit-linear': 'bybit', 'okx-swap': 'okx', 'gate-futures': 'gate',
+      'bitget-usdt-futures': 'bitget', 'aster-perp': 'aster', 'htx-usdt-swap': 'htx', 'coinex-futures': 'coinex',
+      'pacifica-perp': 'pacifica', 'backpack-perp': 'backpack', 'bitfinex-derivatives': 'bitfinex',
+      'deribit-futures': 'deribit', 'hyperliquid-perp': 'hyperliquid',
+    };
+    const validTriple = value => Array.isArray(value)
+      && value.length >= 3
+      && value.slice(0, 3).every(item => item != null && Number.isSafeInteger(Number(item)) && Number(item) >= 0)
+      && Math.abs(Number(value[0]) + Number(value[1]) - Number(value[2])) <= 1;
     const out = [];
     for (const date of dates) {
       const started = performance.now();
@@ -158,27 +166,17 @@ try {
         const descriptors = Array.isArray(body?.exchanges) ? body.exchanges : [];
         const vector = Array.isArray(body?.exchangeTriples) ? body.exchangeTriples : [];
         const normalized = new Map(descriptors.map((item, index) => [String(item?.id || item?.liveExchangeId || ''), vector[index]]));
-        const aliases = {
-          'binance-usdm': 'binance', 'bybit-linear': 'bybit', 'okx-swap': 'okx', 'gate-futures': 'gate',
-          'bitget-usdt-futures': 'bitget', 'aster-perp': 'aster', 'htx-usdt-swap': 'htx', 'coinex-futures': 'coinex',
-          'pacifica-perp': 'pacifica', 'backpack-perp': 'backpack', 'bitfinex-derivatives': 'bitfinex',
-          'deribit-futures': 'deribit', 'hyperliquid-perp': 'hyperliquid',
-        };
         const memberStates = {};
         for (const member of Array.isArray(body?.aggregateMembers) ? body.aggregateMembers : []) {
-          const triple = normalized.get(aliases[String(member)] || String(member));
-          memberStates[String(member)] = Array.isArray(triple)
-            && triple.length >= 3
-            && triple.slice(0, 3).every(value => Number.isSafeInteger(Number(value)) && Number(value) >= 0)
-            && Math.abs(Number(triple[0]) + Number(triple[1]) - Number(triple[2])) <= 1;
+          memberStates[String(member)] = validTriple(normalized.get(aliases[String(member)] || String(member)));
         }
         const totals = Array.isArray(body?.totals) ? body.totals.slice(0, 3) : [];
         const totalsState = totals.length === 3 && totals.every(value => value == null)
           ? 'null'
-          : totals.length === 3 && totals.every(value => Number.isSafeInteger(Number(value)) && Number(value) >= 0)
+          : totals.length === 3 && totals.every(value => value != null && Number.isSafeInteger(Number(value)) && Number(value) >= 0)
             ? 'numeric'
             : 'mixed';
-        return {
+        out.push({
           date,
           http: response.status,
           elapsedMs: Math.round(performance.now() - started),
@@ -192,22 +190,20 @@ try {
           totalsState,
           basis: String(body?.basis || ''),
           error: body?.error ? String(body.error).slice(0, 120) : null,
-        };
+        });
       } catch (error) {
-        out.push({ date, http: 0, elapsedMs: Math.round(performance.now() - started), error: String(error?.name || error || 'fetch-error') });
+        out.push({
+          date,
+          http: 0,
+          elapsedMs: Math.round(performance.now() - started),
+          error: String(error?.name || error || 'fetch-error'),
+        });
+      } finally {
         clearTimeout(timer);
-        continue;
       }
-      clearTimeout(timer);
-      out.push(arguments[0]);
     }
     return out;
   }, forwardDates);
-
-  // The browser-side loop above cannot safely reuse arguments after async fetch; re-run compactly if needed.
-  if (!Array.isArray(dayResults) || dayResults.length !== forwardDates.length || dayResults.some(item => !item?.date)) {
-    throw new Error('day detail probe contract failed');
-  }
 
   for (const result of dayResults) {
     const memberSet = new Set(result.aggregateMembers || []);
