@@ -1,0 +1,21 @@
+name: Liquidation daily History API diagnostic
+
+on:
+  push:
+    paths:
+      - "scripts/liquidation-daily-history-api-diagnostic.mjs"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  api-diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      WA_PREVIEW_URL: https://c62edb2a.wave-alpha.pages.dev/
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run bounded daily History diagnostic
+        run: node scripts/liquidation-daily-history-api-diagnostic.mjs
