@@ -34,22 +34,27 @@ const result = await page.evaluate(async () => {
     const text = await response.text();
     let payload = null;
     try { payload = JSON.parse(text); } catch (_) {}
+    const errors = Array.isArray(payload?.errors)
+      ? payload.errors.slice(0, 3).map(item => ({
+          code: item?.code == null ? null : String(item.code).slice(0, 40),
+          message: item?.message == null ? null : String(item.message).slice(0, 160),
+        }))
+      : [];
     return {
       http: response.status,
-      statusText: response.statusText,
       elapsedMs: Math.round(performance.now() - started),
       contentType: response.headers.get('content-type'),
-      cacheControl: response.headers.get('cache-control'),
       cfRayPresent: Boolean(response.headers.get('cf-ray')),
-      server: response.headers.get('server'),
       bodyBytes: new TextEncoder().encode(text).byteLength,
-      bodyKind: payload && typeof payload === 'object'
-        ? 'json'
-        : /^\s*<!doctype|^\s*<html/i.test(text) ? 'html' : 'other',
-      jsonError: payload?.error == null ? null : String(payload.error).slice(0, 120),
-      jsonSchema: payload?.schema == null ? null : String(payload.schema).slice(0, 120),
+      bodyKind: payload && typeof payload === 'object' ? 'json' : 'other',
+      topLevelKeys: payload && typeof payload === 'object' && !Array.isArray(payload)
+        ? Object.keys(payload).sort().slice(0, 20)
+        : [],
+      code: payload?.code == null ? null : String(payload.code).slice(0, 40),
+      message: payload?.message == null ? null : String(payload.message).slice(0, 160),
+      error: typeof payload?.error === 'string' ? payload.error.slice(0, 160) : null,
+      errors,
       hasRows: Array.isArray(payload?.rows),
-      rowCount: Array.isArray(payload?.rows) ? payload.rows.length : null,
     };
   } catch (error) {
     return {
@@ -63,7 +68,7 @@ const result = await page.evaluate(async () => {
 });
 
 console.log(JSON.stringify({
-  schema: 'wave-liquidation-history-503-signature-v1',
+  schema: 'wave-liquidation-history-503-code-v1',
   targetHost: new URL(target).hostname,
   rawRowsLogged: false,
   moneyValuesLogged: false,
