@@ -42,9 +42,22 @@ const evidence = {
 let failed = false;
 
 try {
-  // Use a same-origin static document so app scripts cannot navigate away while
-  // the focused API probe is running. The fetches below remain same-origin.
-  await page.goto(`${target}/robots.txt`, { waitUntil: 'load', timeout: 45_000 });
+  // Fulfill a synthetic document at the exact Preview origin. This gives browser
+  // fetches real same-origin / Fetch-Metadata semantics without loading app JS or
+  // allowing Pages redirects to destroy the execution context during this probe.
+  const qaShellUrl = `${target}/__wave_alpha_qa_shell__`;
+  await page.route(qaShellUrl, async route => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/html; charset=utf-8',
+      body: '<!doctype html><meta charset="utf-8"><title>Wave Alpha QA shell</title>',
+    });
+  });
+  await page.goto(qaShellUrl, { waitUntil: 'load', timeout: 45_000 });
+  await page.unroute(qaShellUrl);
+  if (new URL(page.url()).origin !== new URL(target).origin) {
+    throw new Error('same-origin QA shell origin mismatch');
+  }
 
   const rangeResults = await page.evaluate(async inputRanges => {
     const out = [];
