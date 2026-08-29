@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     env:
-      WA_PREVIEW_URL: https://c62edb2a.wave-alpha.pages.dev/
+      WA_PREVIEW_URL: https://b39c01f6.wave-alpha.pages.dev/
     steps:
       - uses: actions/checkout@v4
       - name: Run bounded daily History diagnostic
