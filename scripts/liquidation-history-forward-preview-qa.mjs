@@ -42,7 +42,9 @@ const evidence = {
 let failed = false;
 
 try {
-  await page.goto(`${target}/`, { waitUntil: 'domcontentloaded', timeout: 45_000 });
+  // Use a same-origin static document so app scripts cannot navigate away while
+  // the focused API probe is running. The fetches below remain same-origin.
+  await page.goto(`${target}/robots.txt`, { waitUntil: 'load', timeout: 45_000 });
 
   const rangeResults = await page.evaluate(async inputRanges => {
     const out = [];

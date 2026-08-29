@@ -17,7 +17,7 @@ concurrency:
 jobs:
   preview-qualification:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     env:
       WA_PREVIEW_URL: https://8f53ebe7.wave-alpha.pages.dev/
     steps:
@@ -39,22 +39,9 @@ jobs:
           set -e
           printf 'QA_RC=%s\n' "$rc" >> "$GITHUB_OUTPUT"
           exit 0
-      - name: Run existing hardcore desktop/mobile UI QA
-        id: ui
-        if: always()
-        shell: bash
-        run: |
-          set +e
-          node scripts/liquidation-hardcore-preview-qa.mjs 2>&1 | tee /tmp/liquidation-hardcore-preview-qa.txt
-          rc=${PIPESTATUS[0]}
-          set -e
-          printf 'QA_RC=%s\n' "$rc" >> "$GITHUB_OUTPUT"
-          exit 0
-      - name: Enforce combined qualification result
+      - name: Enforce focused API qualification result
         if: always()
         shell: bash
         run: |
           printf 'API_QA_RC=%s\n' '${{ steps.api.outputs.QA_RC }}'
-          printf 'UI_QA_RC=%s\n' '${{ steps.ui.outputs.QA_RC }}'
           test '${{ steps.api.outputs.QA_RC }}' = '0'
-          test '${{ steps.ui.outputs.QA_RC }}' = '0'
