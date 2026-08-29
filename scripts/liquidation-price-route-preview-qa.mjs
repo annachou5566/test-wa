@@ -1,3 +1,4 @@
+// Focused rerun after daily History HL-off dataset-bounded recovery.
 import { chromium } from 'playwright';
 
 const target = String(process.env.WA_PREVIEW_URL || '').trim().replace(/\/$/, '');
