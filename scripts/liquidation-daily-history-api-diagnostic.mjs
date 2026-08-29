@@ -1,3 +1,4 @@
+// Bounded rerun after HL-off dataset-bounded source invalidator.
 const target = String(process.env.WA_PREVIEW_URL || '').trim().replace(/\/$/, '');
 if (!/^https:\/\/[a-z0-9-]+\.wave-alpha\.pages\.dev$/i.test(target)) throw new Error('invalid Preview origin');
 
