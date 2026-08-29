@@ -1,0 +1,32 @@
+name: Hyperliquid History 014db947 Preview self-QA
+
+on:
+  push:
+    branches:
+      - "qa/hl-history-014db947-20260829"
+    paths:
+      - "scripts/hl-history-014db947-preview-qa.mjs"
+      - ".github/workflows/hl-history-014db947-preview-qa.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hl-history-014db947-preview-qa
+  cancel-in-progress: true
+
+jobs:
+  browser-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install Playwright
+        run: npm install --no-save playwright@1.55.0
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run bounded Preview self-QA
+        run: node scripts/hl-history-014db947-preview-qa.mjs
