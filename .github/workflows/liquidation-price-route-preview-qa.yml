@@ -1,0 +1,32 @@
+name: Liquidation price route Preview QA
+
+on:
+  push:
+    paths:
+      - "scripts/liquidation-price-route-preview-qa.mjs"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: liquidation-price-route-preview-qa
+  cancel-in-progress: true
+
+jobs:
+  price-route-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      WA_PREVIEW_URL: https://c62edb2a.wave-alpha.pages.dev/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install Playwright
+        run: npm install --no-save playwright@1.55.0
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run focused price route qualification
+        run: node scripts/liquidation-price-route-preview-qa.mjs
