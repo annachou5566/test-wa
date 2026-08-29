@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: liquidation-hardcore-preview-qa
@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     env:
-      WA_PREVIEW_URL: https://b975c52d.wave-alpha.pages.dev/
+      WA_PREVIEW_URL: https://a97918c3.wave-alpha.pages.dev/
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -37,22 +37,11 @@ jobs:
           node scripts/liquidation-hardcore-preview-qa.mjs 2>&1 | tee /tmp/liquidation-hardcore-preview-qa.txt
           rc=${PIPESTATUS[0]}
           set -e
-          printf 'exitCode=%s\n' "$rc" >> /tmp/liquidation-hardcore-preview-qa.txt
           printf 'QA_RC=%s\n' "$rc" >> "$GITHUB_OUTPUT"
-      - name: Persist bounded QA evidence
-        if: always()
-        shell: bash
-        run: |
-          mkdir -p results
-          cp /tmp/liquidation-hardcore-preview-qa.txt results/liquidation-hardcore-preview-qa.txt
-          git config user.name github-actions
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add results/liquidation-hardcore-preview-qa.txt
-          if ! git diff --cached --quiet; then
-            git commit -m "QA evidence: Liquidation hardcore Preview"
-            git push
-          fi
+          exit 0
       - name: Enforce hardcore QA result
         if: always()
         shell: bash
-        run: test "${{ steps.qa.outputs.QA_RC }}" = "0"
+        run: |
+          printf 'UI_QA_RC=%s\n' '${{ steps.qa.outputs.QA_RC }}'
+          test '${{ steps.qa.outputs.QA_RC }}' = '0'
