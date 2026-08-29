@@ -1,4 +1,4 @@
-const ORIGIN = 'https://27a195cc.wave-alpha.pages.dev';
+const ORIGIN = 'https://3879e8f9.wave-alpha.pages.dev';
 const QA = {
   Accept: 'application/json',
   'X-Wave-Client': 'liquidation-history-v1',
@@ -91,6 +91,7 @@ async function historyMeta(exchange, day) {
     `day=${day}`,
     `http=${result.status || 'ERR'}`,
     `ms=${result.ms}`,
+    `exactDay=${clean(body.exactDay || 'none')}`,
     `storage=${clean(body.storage || 'none')}`,
     `availableFrom=${isoDay(body.availableFrom)}`,
     `firstObserved=${isoDay(body.firstObservedAt)}`,
@@ -106,7 +107,7 @@ async function historyMeta(exchange, day) {
   return result;
 }
 
-console.log('ROOTCAUSE_PROBE_V2');
+console.log('ROOTCAUSE_PROBE_V3');
 await probe('SOURCE', '/api/liquidations/hyperliquid-preview-history?mode=source-diagnostic&from=2026-08-25&to=2026-08-29');
 
 for (const day of ['2026-08-25', '2026-08-26', '2026-08-27', '2026-08-28']) {
