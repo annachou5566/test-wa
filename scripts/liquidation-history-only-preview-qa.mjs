@@ -41,20 +41,18 @@ for (const profile of profiles) {
       && window.WaveLiquidationPageAudit?.snapshot?.()?.mounted
     ), null, { timeout: 25_000 });
 
-    const button = page.locator('#cm-btn-liquidation');
-    await button.waitFor({ state: 'visible', timeout: 10_000 });
-    if (!(await page.evaluate(() => window.WaveLiquidationPageAudit?.snapshot?.()?.active === true))) {
-      await button.click();
-      await page.waitForFunction(() => window.WaveLiquidationPageAudit?.snapshot?.()?.active === true, null, { timeout: 8_000 });
+    const initiallyActive = await page.evaluate(() => window.WaveLiquidationPageAudit?.snapshot?.()?.active === true);
+    if (!initiallyActive) {
+      await page.evaluate(() => document.getElementById('cm-btn-liquidation')?.click());
+      await page.waitForFunction(() => window.WaveLiquidationPageAudit?.snapshot?.()?.active === true, null, { timeout: 8_000, polling: 100 });
     }
 
     for (let index = 0; index < ranges.length; index++) {
       const range = ranges[index];
       if (index > 0) {
         const selector = `[data-cml-history-range="${range.key}"]`;
-        const control = page.locator(selector);
-        await control.waitFor({ state: 'visible', timeout: 8_000 });
-        await control.click();
+        await page.waitForFunction(sel => Boolean(document.querySelector(sel)), selector, { timeout: 8_000 });
+        await page.evaluate(sel => document.querySelector(sel)?.click(), selector);
       }
 
       const started = Date.now();
