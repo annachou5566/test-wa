@@ -12,20 +12,36 @@ function clean(text) {
   return String(text || '').replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').slice(0, 220);
 }
 
+function summarizeJson(body) {
+  if (!body || typeof body !== 'object') return 'json=nonobject';
+  const keys = Object.keys(body).sort().slice(0, 20).join(',');
+  const fields = [
+    ['ok', body.ok],
+    ['status', body.status],
+    ['reason', body.reason],
+    ['code', body.code],
+    ['errorCode', body.error?.code],
+    ['errorMessage', body.error?.message],
+    ['message', body.message],
+  ].filter(([, value]) => value !== undefined && value !== null && String(value) !== '')
+   .map(([key, value]) => `${key}=${clean(value)}`)
+   .join(' ');
+  return `keys=${keys || 'none'}${fields ? ' ' + fields : ''}`;
+}
+
 async function probe(label, path, headers = QA) {
   const started = Date.now();
   try {
     const res = await fetch(ORIGIN + path, { method: 'GET', cache: 'no-store', headers });
     const text = await res.text();
-    let error = '';
+    let detail = '';
     try {
-      const body = JSON.parse(text);
-      if (body && typeof body === 'object') error = clean(body.error?.code || body.error || body.message || '');
+      detail = summarizeJson(JSON.parse(text));
     } catch (_) {
       const title = text.match(/<title[^>]*>([^<]*)<\/title>/i)?.[1] || '';
-      error = clean(title || text.slice(0, 180));
+      detail = `nonjson=${clean(title || text.slice(0, 180)) || 'empty'}`;
     }
-    console.log(`${label} status=${res.status} ms=${Date.now() - started} contentType=${clean(res.headers.get('content-type')) || 'none'} server=${clean(res.headers.get('server')) || 'none'} cfRay=${clean(res.headers.get('cf-ray')) || 'none'} error=${error || 'none'}`);
+    console.log(`${label} status=${res.status} ms=${Date.now() - started} contentType=${clean(res.headers.get('content-type')) || 'none'} server=${clean(res.headers.get('server')) || 'none'} cfRay=${clean(res.headers.get('cf-ray')) || 'none'} ${detail}`);
     return res.status;
   } catch (err) {
     console.log(`${label} status=ERR ms=${Date.now() - started} error=${clean(err?.name + ':' + err?.message)}`);
