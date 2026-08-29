@@ -1,0 +1,60 @@
+name: Liquidation History forward Preview qualification
+
+on:
+  push:
+    paths:
+      - "scripts/liquidation-history-forward-preview-qa.mjs"
+      - ".github/workflows/liquidation-history-forward-preview-qa.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: liquidation-history-forward-preview-qa
+  cancel-in-progress: true
+
+jobs:
+  preview-qualification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      WA_PREVIEW_URL: https://8f53ebe7.wave-alpha.pages.dev/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install Playwright
+        run: npm install --no-save playwright@1.55.0
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run bounded forward History API qualification
+        id: api
+        shell: bash
+        run: |
+          set +e
+          node scripts/liquidation-history-forward-preview-qa.mjs 2>&1 | tee /tmp/liquidation-history-forward-preview-qa.txt
+          rc=${PIPESTATUS[0]}
+          set -e
+          printf 'QA_RC=%s\n' "$rc" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Run existing hardcore desktop/mobile UI QA
+        id: ui
+        if: always()
+        shell: bash
+        run: |
+          set +e
+          node scripts/liquidation-hardcore-preview-qa.mjs 2>&1 | tee /tmp/liquidation-hardcore-preview-qa.txt
+          rc=${PIPESTATUS[0]}
+          set -e
+          printf 'QA_RC=%s\n' "$rc" >> "$GITHUB_OUTPUT"
+          exit 0
+      - name: Enforce combined qualification result
+        if: always()
+        shell: bash
+        run: |
+          printf 'API_QA_RC=%s\n' '${{ steps.api.outputs.QA_RC }}'
+          printf 'UI_QA_RC=%s\n' '${{ steps.ui.outputs.QA_RC }}'
+          test '${{ steps.api.outputs.QA_RC }}' = '0'
+          test '${{ steps.ui.outputs.QA_RC }}' = '0'
