@@ -21,12 +21,19 @@ page.on('request', request => {
 });
 
 await page.goto(`${target}/`, { waitUntil: 'domcontentloaded', timeout: 45_000 });
-await page.waitForFunction(() => Boolean(document.getElementById('cm-btn-liquidation') && window.WaveLiquidationPageAudit?.snapshot?.()?.mounted), null, { timeout: 20_000 });
-await page.evaluate(() => {
-  const button = document.getElementById('cm-btn-liquidation');
-  const state = window.WaveLiquidationPageAudit?.snapshot?.();
-  if (!state?.active) button?.click();
-});
+await page.waitForFunction(() => Boolean(
+  document.getElementById('cm-btn-liquidation')
+  && window.WaveLiquidationPageAudit?.snapshot?.()?.mounted
+  && window.WaveLiquidationPriceContext?.audit,
+), null, { timeout: 25_000 });
+
+const liquidationButton = page.locator('#cm-btn-liquidation');
+await liquidationButton.waitFor({ state: 'visible', timeout: 10_000 });
+const initiallyActive = await page.evaluate(() => window.WaveLiquidationPageAudit?.snapshot?.()?.active === true);
+if (!initiallyActive) {
+  await liquidationButton.click();
+  await page.waitForFunction(() => window.WaveLiquidationPageAudit?.snapshot?.()?.active === true, null, { timeout: 8_000 });
+}
 
 let ready = false;
 try {
@@ -39,7 +46,7 @@ try {
       && state.historyLoading === false
       && state.priceStatus === 'available'
       && Number(state.pricePointCount) > 0);
-  }, null, { timeout: 15_000 });
+  }, null, { timeout: 20_000 });
   ready = true;
 } catch (_) {}
 
