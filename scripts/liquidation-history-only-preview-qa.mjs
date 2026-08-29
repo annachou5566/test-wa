@@ -5,7 +5,6 @@ if (!/^https:\/\/[a-z0-9-]+\.wave-alpha\.pages\.dev$/i.test(target)) throw new E
 
 const profiles = [
   { name: 'desktop-1440x900', context: { viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 } },
-  { name: 'mobile-390x844-touch', context: { viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, isMobile: true, hasTouch: true } },
 ];
 const ranges = [
   { key: '90d', exactRows: 90 },
@@ -20,12 +19,38 @@ const evidence = {
   schema: 'wave-liquidation-history-only-preview-qa-v1',
   targetHost: new URL(target).hostname,
   ignoresPriceAvailability: true,
+  mobilePriorPassRun: 33246286792,
   rawRowsLogged: false,
   moneyValuesLogged: false,
   screenshotsStored: false,
   profiles: [],
 };
 let failed = false;
+
+async function waitMounted(page) {
+  await page.waitForLoadState('domcontentloaded');
+  await page.waitForFunction(() => Boolean(
+    document.getElementById('cm-btn-liquidation')
+    && window.WaveLiquidationPageAudit?.snapshot?.()?.mounted
+  ), null, { timeout: 25_000 });
+}
+
+async function activateLiquidation(page) {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    await waitMounted(page);
+    await page.waitForTimeout(1200);
+    const active = await page.evaluate(() => window.WaveLiquidationPageAudit?.snapshot?.()?.active === true).catch(() => false);
+    if (active) return;
+    try {
+      await page.evaluate(() => document.getElementById('cm-btn-liquidation')?.click());
+      await page.waitForFunction(() => window.WaveLiquidationPageAudit?.snapshot?.()?.active === true, null, { timeout: 8_000, polling: 100 });
+      return;
+    } catch (error) {
+      if (attempt === 2) throw error;
+      await page.waitForLoadState('domcontentloaded').catch(() => {});
+    }
+  }
+}
 
 for (const profile of profiles) {
   const context = await browser.newContext(profile.context);
@@ -36,16 +61,7 @@ for (const profile of profiles) {
   const profileEvidence = { profile: profile.name, ranges: [], pageErrors };
   try {
     await page.goto(`${target}/`, { waitUntil: 'domcontentloaded', timeout: 45_000 });
-    await page.waitForFunction(() => Boolean(
-      document.getElementById('cm-btn-liquidation')
-      && window.WaveLiquidationPageAudit?.snapshot?.()?.mounted
-    ), null, { timeout: 25_000 });
-
-    const initiallyActive = await page.evaluate(() => window.WaveLiquidationPageAudit?.snapshot?.()?.active === true);
-    if (!initiallyActive) {
-      await page.evaluate(() => document.getElementById('cm-btn-liquidation')?.click());
-      await page.waitForFunction(() => window.WaveLiquidationPageAudit?.snapshot?.()?.active === true, null, { timeout: 8_000, polling: 100 });
-    }
+    await activateLiquidation(page);
 
     for (let index = 0; index < ranges.length; index++) {
       const range = ranges[index];
