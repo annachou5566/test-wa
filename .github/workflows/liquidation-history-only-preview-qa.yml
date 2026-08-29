@@ -1,0 +1,33 @@
+name: Liquidation History-only Preview QA
+
+on:
+  push:
+    paths:
+      - "scripts/liquidation-history-only-preview-qa.mjs"
+      - ".github/workflows/liquidation-history-only-preview-qa.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: liquidation-history-only-preview-qa
+  cancel-in-progress: true
+
+jobs:
+  browser-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      WA_PREVIEW_URL: https://c2480d40.wave-alpha.pages.dev/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install Playwright
+        run: npm install --no-save playwright@1.55.0
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Run History-only desktop and mobile QA
+        run: node scripts/liquidation-history-only-preview-qa.mjs
