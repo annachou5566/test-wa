@@ -1,0 +1,21 @@
+name: Hyperliquid History focused 503 probe
+
+on:
+  push:
+    branches:
+      - "qa/hl-history-014db947-20260829"
+    paths:
+      - "scripts/hl-history-503-probe.mjs"
+      - ".github/workflows/hl-history-503-probe.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run focused read-only probe
+        run: node scripts/hl-history-503-probe.mjs
