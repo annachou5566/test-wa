@@ -1,11 +1,11 @@
-name: Gate7 browser runtime QA
+name: Gate7 canonical Pages QA
 
 on:
   push:
     branches:
       - "chatgpt/gate7-browser-runtime-qa-2026-09-05"
     paths:
-      - "scripts/gate7-browser-runtime-qa.mjs"
+      - "scripts/gate7-pages-canonical-qa.mjs"
       - ".github/workflows/gate7-browser-runtime-qa.yml"
   workflow_dispatch:
 
@@ -19,15 +19,11 @@ concurrency:
 jobs:
   gate7:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 3
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - name: Install Playwright
-        run: npm install --no-save playwright@1.55.0
-      - name: Install Chromium
-        run: npx playwright install --with-deps chromium
-      - name: Run Gate7 against Production
-        run: node scripts/gate7-browser-runtime-qa.mjs
+      - name: Verify canonical Pages
+        run: node scripts/gate7-pages-canonical-qa.mjs
