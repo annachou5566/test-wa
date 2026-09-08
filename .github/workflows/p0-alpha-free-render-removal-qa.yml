@@ -26,9 +26,9 @@ jobs:
           set -Eeuo pipefail
           git init /tmp/dfk
           git -C /tmp/dfk remote add origin https://github.com/annachou5566/data-fetcher-king.git
-          git -C /tmp/dfk fetch --depth=1 origin c58b1739528161997fc365b858abc1acffe1152a
+          git -C /tmp/dfk fetch --depth=1 origin 0fa4f18e5480c93d9fc2877db9aa42cd77a328b9
           git -C /tmp/dfk checkout --detach FETCH_HEAD
-          test "$(git -C /tmp/dfk rev-parse HEAD)" = "c58b1739528161997fc365b858abc1acffe1152a"
+          test "$(git -C /tmp/dfk rev-parse HEAD)" = "0fa4f18e5480c93d9fc2877db9aa42cd77a328b9"
 
       - name: Compile Python candidates
         shell: bash
@@ -91,9 +91,9 @@ jobs:
           set -Eeuo pipefail
           git init /tmp/alpha
           git -C /tmp/alpha remote add origin https://github.com/annachou5566/alpha-realtime-bot.git
-          git -C /tmp/alpha fetch --depth=1 origin b17d08ca29348ca130aaf8fab7ddd9aa7069a4e7
+          git -C /tmp/alpha fetch --depth=1 origin bb83a65d68e364a394ed4e0d95a4dd817e479c91
           git -C /tmp/alpha checkout --detach FETCH_HEAD
-          test "$(git -C /tmp/alpha rev-parse HEAD)" = "b17d08ca29348ca130aaf8fab7ddd9aa7069a4e7"
+          test "$(git -C /tmp/alpha rev-parse HEAD)" = "bb83a65d68e364a394ed4e0d95a4dd817e479c91"
 
       - name: Install exact backend dependencies
         shell: bash
