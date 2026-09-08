@@ -1,0 +1,80 @@
+name: P0 Phase D Candidate Emitter QA
+
+on:
+  push:
+    branches:
+      - chatgpt/qa-p0-alpha-free-render-removal-2026-09-08
+
+permissions:
+  contents: read
+
+jobs:
+  qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Fetch exact Alpha candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git init /tmp/alpha
+          git -C /tmp/alpha remote add origin https://github.com/annachou5566/alpha-realtime-bot.git
+          git -C /tmp/alpha fetch --depth=1 origin 11c80d5c0f6b354ebd45c348034ccec659958d26
+          git -C /tmp/alpha checkout --detach FETCH_HEAD
+          test "$(git -C /tmp/alpha rev-parse HEAD)" = "11c80d5c0f6b354ebd45c348034ccec659958d26"
+          printf 'ALPHA_EXACT_HEAD=PASS\n'
+
+      - name: Static candidate-emitter gates
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd /tmp/alpha
+          node --check scripts/tails-candidate-artifact.js
+          node --check lib/tails-producer.js
+          ! grep -Eq 'PutObjectCommand|S3Client|R2_ACCESS_KEY|R2_SECRET|R2_ENDPOINT|R2_BUCKET' scripts/tails-candidate-artifact.js
+          grep -q 'qualificationOnly: true' scripts/tails-candidate-artifact.js
+          grep -q 'includePayload: true' scripts/tails-candidate-artifact.js
+          grep -q 'R2_WRITE_PERFORMED=NO' scripts/tails-candidate-artifact.js
+          printf 'CANDIDATE_EMITTER_STATIC=PASS\n'
+
+      - name: Install exact dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd /tmp/alpha
+          npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Run full Alpha tests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd /tmp/alpha
+          npm test
+          printf 'ALPHA_BACKEND_TESTS=PASS\n'
+
+      - name: Full live candidate artifact emission
+        shell: bash
+        env:
+          TAILS_CANDIDATE_ARTIFACT_ONLY: "true"
+          TAILS_CANDIDATE_OUTPUT: "/tmp/wa-tails-v2-qa.json"
+          TAILS_CANDIDATE_CONCURRENCY: "2"
+          TAILS_CANDIDATE_MAX_REQUESTS: "2000"
+        run: |
+          set -Eeuo pipefail
+          cd /tmp/alpha
+          node scripts/tails-candidate-artifact.js
+          test -s /tmp/wa-tails-v2-qa.json
+          test -s /tmp/wa-tails-v2-qa.json.sha256
+          cd /tmp
+          sha256sum -c wa-tails-v2-qa.json.sha256
+          python3 - <<'PY'
+          import json, pathlib
+          p=json.loads(pathlib.Path('/tmp/wa-tails-v2-qa.json').read_text())
+          assert p['schema_version']==2
+          assert p['complete'] is True
+          assert len(p['total'])==p['expected_token_count']
+          assert len(p['limit'])==p['expected_limit_token_count']
+          assert p['expected_limit_token_count']+p['unsupported_limit_token_count']==p['limit_applicable_token_count']
+          print('CANDIDATE_ARTIFACT_FILE_CONTRACT=PASS')
+          PY
+          printf 'FULL_LIVE_CANDIDATE_EMISSION=PASS\n'
