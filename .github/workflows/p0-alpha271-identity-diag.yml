@@ -1,0 +1,85 @@
+name: P0 ALPHA 271 Identity Diagnostic
+
+on:
+  push:
+    branches:
+      - chatgpt/qa-p0-alpha-free-render-removal-2026-09-08
+
+permissions:
+  contents: read
+
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Compare Binance identities and kline behavior
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import json, urllib.parse, urllib.request
+
+          H={
+            "User-Agent":"Mozilla/5.0 Chrome/121",
+            "Referer":"https://www.binance.com/en/alpha",
+            "Origin":"https://www.binance.com",
+            "Accept":"application/json",
+            "client-type":"web",
+          }
+          MASTER="https://www.binance.com/bapi/defi/v1/public/wallet-direct/buw/wallet/cex/alpha/all/token/list"
+          BULK="https://www.binance.com/bapi/defi/v1/public/alpha-trade/aggTicker24?dataType=aggregate"
+          K="https://www.binance.com/bapi/defi/v1/public/alpha-trade/agg-klines"
+          TARGET="ALPHA_271"
+
+          def get(url):
+            req=urllib.request.Request(url,headers=H)
+            with urllib.request.urlopen(req,timeout=20) as r:
+              return r.status,json.loads(r.read().decode())
+
+          def pick(rows):
+            for x in rows:
+              if str(x.get("alphaId"))==TARGET:
+                return x
+            return None
+
+          mh,m=get(MASTER)
+          bh,b=get(BULK)
+          master=pick(m.get("data") or [])
+          bulk=pick(b.get("data") or [])
+          keys=("alphaId","symbol","chainId","contractAddress","offline","listingCex","stockState","volume24h")
+          print("MASTER_HTTP="+str(mh))
+          print("BULK_HTTP="+str(bh))
+          print("MASTER="+json.dumps({k:master.get(k) for k in keys} if master else None,separators=(",",":")))
+          print("BULK="+json.dumps({k:bulk.get(k) for k in keys} if bulk else None,separators=(",",":")))
+
+          identities=[]
+          for src,obj in (("master",master),("bulk",bulk)):
+            if not obj or not obj.get("contractAddress") or obj.get("chainId") in (None,""):
+              continue
+            tup=(str(obj["chainId"]),str(obj["contractAddress"]))
+            if tup not in [x[1:] for x in identities]:
+              identities.append((src,*tup))
+
+          for src,chain,addr in identities:
+            clean=addr if chain in ("CT_501","CT_784") else addr.lower()
+            q=urllib.parse.urlencode({
+              "chainId":chain,
+              "interval":"1m",
+              "limit":"2",
+              "tokenAddress":clean,
+              "dataType":"aggregate",
+            })
+            try:
+              hh,p=get(K+"?"+q)
+              rows=((p.get("data") or {}).get("klineInfos")
+                    if isinstance(p.get("data"),dict) else None)
+              print("KLINE_"+src.upper()+"="+json.dumps({
+                "http":hh,
+                "code":p.get("code"),
+                "message":p.get("message") or p.get("msg"),
+                "rows":len(rows) if isinstance(rows,list) else None,
+              },separators=(",",":")))
+            except Exception as e:
+              print("KLINE_"+src.upper()+"="+json.dumps({"error":str(e)},separators=(",",":")))
+          PY
