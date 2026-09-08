@@ -95,9 +95,9 @@ jobs:
           set -Eeuo pipefail
           git init /tmp/alpha
           git -C /tmp/alpha remote add origin https://github.com/annachou5566/alpha-realtime-bot.git
-          git -C /tmp/alpha fetch --depth=1 origin bb83a65d68e364a394ed4e0d95a4dd817e479c91
+          git -C /tmp/alpha fetch --depth=1 origin 12437b70ad07d1019af70cf6c0ac0ba123b5bdce
           git -C /tmp/alpha checkout --detach FETCH_HEAD
-          test "$(git -C /tmp/alpha rev-parse HEAD)" = "bb83a65d68e364a394ed4e0d95a4dd817e479c91"
+          test "$(git -C /tmp/alpha rev-parse HEAD)" = "12437b70ad07d1019af70cf6c0ac0ba123b5bdce"
 
       - name: Install exact backend dependencies
         shell: bash
@@ -112,4 +112,6 @@ jobs:
           set -Eeuo pipefail
           cd /tmp/alpha
           npm test
+          test ! -e .github/workflows/production-rollout.yml
           printf 'ALPHA_BACKEND_TESTS=PASS\n'
+          printf 'RENDER_ROLLOUT_RETIRED=PASS\n'
