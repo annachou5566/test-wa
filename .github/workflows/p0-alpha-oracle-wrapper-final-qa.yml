@@ -1,0 +1,56 @@
+name: P0 Alpha Oracle Wrapper Final QA
+
+on:
+  push:
+    branches:
+      - chatgpt/qa-p0-alpha-free-render-removal-2026-09-08
+
+permissions:
+  contents: read
+
+jobs:
+  source-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Fetch exact alpha candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git init /tmp/alpha
+          git -C /tmp/alpha remote add origin https://github.com/annachou5566/alpha-realtime-bot.git
+          git -C /tmp/alpha fetch --depth=1 origin 7e8be78060b4658f4c4ebb8ae2b5fc41e0e271dc
+          git -C /tmp/alpha checkout --detach FETCH_HEAD
+          test "$(git -C /tmp/alpha rev-parse HEAD)" = "7e8be78060b4658f4c4ebb8ae2b5fc41e0e271dc"
+          printf 'EXACT_HEAD=PASS\n'
+
+      - name: Wrapper and capability static gates
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd /tmp/alpha
+          bash -n scripts/oracle-p0-tails-resource-qualification.sh
+          node --check scripts/tails-resource-qualification.js
+          node --check lib/tails-producer.js
+          node --check lib/tails-cache-contract.js
+          ! grep -Eq 'R2_ENDPOINT_URL|R2_BUCKET_NAME|R2_READ_ONLY_ACCESS_KEY_ID|R2_READ_ONLY_SECRET_ACCESS_KEY|r2_id|r2_secret' scripts/oracle-p0-tails-resource-qualification.sh
+          grep -q "TAILS_QUAL_MAX_REQUESTS', 320, 40, 2000" scripts/tails-resource-qualification.js
+          grep -q 'offline-liveness-limit' lib/tails-producer.js
+          grep -q 'unsupported_limit_ids' lib/tails-producer.js
+          ! grep -Eq 'limitMap\[id\][[:space:]]*\|\|[[:space:]]*0' index.js
+          printf 'ORACLE_WRAPPER_STATIC=PASS\n'
+
+      - name: Install exact dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd /tmp/alpha
+          npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Full backend tests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd /tmp/alpha
+          npm test
+          printf 'ALPHA_BACKEND_TESTS=PASS\n'
