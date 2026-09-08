@@ -1,0 +1,49 @@
+name: P0 Alpha Cohort Authority QA
+
+on:
+  push:
+    branches:
+      - chatgpt/qa-p0-alpha-free-render-removal-2026-09-08
+
+permissions:
+  contents: read
+
+jobs:
+  source-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Fetch exact alpha candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git init /tmp/alpha
+          git -C /tmp/alpha remote add origin https://github.com/annachou5566/alpha-realtime-bot.git
+          git -C /tmp/alpha fetch --depth=1 origin 5e229093a633fd0c3432fca7714315ee13a98a6f
+          git -C /tmp/alpha checkout --detach FETCH_HEAD
+          test "$(git -C /tmp/alpha rev-parse HEAD)" = "5e229093a633fd0c3432fca7714315ee13a98a6f"
+
+      - name: Syntax qualification source
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd /tmp/alpha
+          node --check lib/tails-producer.js
+          node --check scripts/tails-resource-qualification.js
+          bash -n scripts/oracle-p0-tails-resource-qualification.sh
+          printf 'TAILS_QUAL_SOURCE_SYNTAX=PASS\n'
+
+      - name: Install exact dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd /tmp/alpha
+          npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Run backend tests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd /tmp/alpha
+          npm test
+          printf 'ALPHA_BACKEND_TESTS=PASS\n'
