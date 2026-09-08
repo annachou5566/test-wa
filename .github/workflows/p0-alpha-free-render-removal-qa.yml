@@ -75,7 +75,11 @@ jobs:
               '"schema_version": 2',
               '"boundary_date": yesterday_str',
               '"complete": True',
-              '"Tail coverage incomplete; không publish artifact."',
+              'Tail coverage incomplete; không publish artifact.',
+              'Tail cohort có duplicate alphaId; không publish artifact.',
+              'Tail cohort thiếu contract/chainId',
+              'Tail series shape invalid; không publish artifact.',
+              'covered_limit_ids = set(tails_limit)',
               'head_object(Bucket=R2_BUCKET_NAME, Key=\'tails_cache.json\')',
           )
           for needle in required:
