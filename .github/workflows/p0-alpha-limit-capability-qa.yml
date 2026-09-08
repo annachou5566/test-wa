@@ -19,9 +19,9 @@ jobs:
           set -Eeuo pipefail
           git init /tmp/alpha
           git -C /tmp/alpha remote add origin https://github.com/annachou5566/alpha-realtime-bot.git
-          git -C /tmp/alpha fetch --depth=1 origin 3186b4b7a3ef2c5b5ff7dbc257d31b142adcef00
+          git -C /tmp/alpha fetch --depth=1 origin e33bd0f9097ed9ec2fb2ecfde851aa84e16aeca6
           git -C /tmp/alpha checkout --detach FETCH_HEAD
-          test "$(git -C /tmp/alpha rev-parse HEAD)" = "3186b4b7a3ef2c5b5ff7dbc257d31b142adcef00"
+          test "$(git -C /tmp/alpha rev-parse HEAD)" = "e33bd0f9097ed9ec2fb2ecfde851aa84e16aeca6"
           printf 'EXACT_HEAD=PASS\n'
 
       - name: Syntax and static contract
