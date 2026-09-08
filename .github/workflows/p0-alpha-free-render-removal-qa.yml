@@ -75,7 +75,7 @@ jobs:
               '"schema_version": 2',
               '"boundary_date": yesterday_str',
               '"complete": True',
-              'raise RuntimeError("Tail coverage incomplete;',
+              '"Tail coverage incomplete; không publish artifact."',
               'head_object(Bucket=R2_BUCKET_NAME, Key=\'tails_cache.json\')',
           )
           for needle in required:
