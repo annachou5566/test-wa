@@ -55,7 +55,7 @@ jobs:
           grep -q '^import re$' scripts/fetch_alpha.py
           grep -q 'len(rows) < 1000' scripts/fetch_alpha.py
           grep -q '_fetch_tail_response_with_contract_retry' scripts/fetch_alpha.py
-          grep -q 're.fullmatch(r"0x\[0-9a-fA-F\]+"'
+          grep -q 're.fullmatch(r"0x\[0-9a-fA-F\]+"' scripts/fetch_alpha.py
           printf 'DFK_STATIC=PASS\n'
 
       - name: Install Alpha dependencies
