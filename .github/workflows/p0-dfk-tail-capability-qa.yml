@@ -1,0 +1,65 @@
+name: P0 DFK Tail Capability QA
+
+on:
+  push:
+    branches:
+      - chatgpt/qa-p0-alpha-free-render-removal-2026-09-08
+
+permissions:
+  contents: read
+
+jobs:
+  source-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Fetch exact DFK candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git init /tmp/dfk
+          git -C /tmp/dfk remote add origin https://github.com/annachou5566/data-fetcher-king.git
+          git -C /tmp/dfk fetch --depth=1 origin 726ef1a5152132ead25d7d29e6f2f6b18d9f26ef
+          git -C /tmp/dfk checkout --detach FETCH_HEAD
+          test "$(git -C /tmp/dfk rev-parse HEAD)" = "726ef1a5152132ead25d7d29e6f2f6b18d9f26ef"
+          printf 'DFK_EXACT_HEAD=PASS\n'
+
+      - name: Python compile
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd /tmp/dfk
+          python3 -m py_compile scripts/fetch_alpha.py
+          printf 'DFK_PY_COMPILE=PASS\n'
+
+      - name: Static capability contract
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd /tmp/dfk
+          python3 - <<'PY'
+          from pathlib import Path
+          s=Path('scripts/fetch_alpha.py').read_text()
+          required=[
+              'def _build_live_tail_cohort',
+              'def _offline_tail_alive',
+              'code == "-5101"',
+              '"unsupported_limit_ids"',
+              '"unsupported_limit_ids_hash"',
+              '"limit_applicable_token_count"',
+              '"classified_limit_ids_hash"',
+              'Tail source unavailable:',
+          ]
+          missing=[x for x in required if x not in s]
+          assert not missing, missing
+          forbidden=[
+              'PROXY_WORKER_URL',
+              'RENDER_API_KEY',
+              'onrender.com',
+              'expected_limit_ids =',
+              'if res and "data" in res and "klineInfos" in res["data"]',
+          ]
+          hits=[x for x in forbidden if x in s]
+          assert not hits, hits
+          print('DFK_LIMIT_CAPABILITY_STATIC=PASS')
+          PY
