@@ -1,0 +1,70 @@
+name: P0 Offline Liveness Final QA
+
+on:
+  push:
+    branches:
+      - chatgpt/qa-p0-alpha-free-render-removal-2026-09-08
+
+permissions:
+  contents: read
+
+jobs:
+  source-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Fetch exact sources
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git init /tmp/alpha
+          git -C /tmp/alpha remote add origin https://github.com/annachou5566/alpha-realtime-bot.git
+          git -C /tmp/alpha fetch --depth=1 origin 39bad95dfc1d464be3aea1e8cd77199e42f7fa31
+          git -C /tmp/alpha checkout --detach FETCH_HEAD
+          test "$(git -C /tmp/alpha rev-parse HEAD)" = "39bad95dfc1d464be3aea1e8cd77199e42f7fa31"
+          printf 'ALPHA_EXACT_HEAD=PASS\n'
+
+          git init /tmp/dfk
+          git -C /tmp/dfk remote add origin https://github.com/annachou5566/data-fetcher-king.git
+          git -C /tmp/dfk fetch --depth=1 origin 31d3a184a47f2572255ce26d86973249fa2c0a70
+          git -C /tmp/dfk checkout --detach FETCH_HEAD
+          test "$(git -C /tmp/dfk rev-parse HEAD)" = "31d3a184a47f2572255ce26d86973249fa2c0a70"
+          printf 'DFK_EXACT_HEAD=PASS\n'
+
+      - name: Static policy gates
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd /tmp/alpha
+          node --check lib/tails-producer.js
+          node --check scripts/tails-resource-qualification.js
+          bash -n scripts/oracle-p0-tails-resource-qualification.sh
+          grep -q "code === '-5095'" lib/tails-producer.js
+          grep -q "capability: 'invalid-address'" lib/tails-producer.js
+          grep -q "reason: 'bad-token-address'" lib/tails-producer.js
+          grep -q 'kline-invalid-address' lib/tails-producer.js
+          ! grep -Eq 'limitMap\[id\][[:space:]]*\|\|[[:space:]]*0' index.js
+          printf 'ALPHA_5095_POLICY_STATIC=PASS\n'
+
+          cd /tmp/dfk
+          python3 -m py_compile scripts/fetch_alpha.py
+          grep -q 'code == "-5095"' scripts/fetch_alpha.py
+          grep -q 'return "invalid_address", \[\]' scripts/fetch_alpha.py
+          grep -q 'return False, "bad-token-address"' scripts/fetch_alpha.py
+          grep -q 'Tail invalid address for active fetch' scripts/fetch_alpha.py
+          printf 'DFK_5095_POLICY_STATIC=PASS\n'
+
+      - name: Install alpha dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd /tmp/alpha
+          npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Run full alpha tests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd /tmp/alpha
+          npm test
+          printf 'ALPHA_BACKEND_TESTS=PASS\n'
