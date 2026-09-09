@@ -1,0 +1,26 @@
+name: P0 R2 Metadata Surface QA
+
+on:
+  push:
+    branches:
+      - chatgpt/qa-p0-alpha-free-render-removal-2026-09-08
+
+permissions:
+  contents: read
+
+jobs:
+  qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check Wrangler 4.125 object put metadata surface
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx --yes wrangler@4.125.0 r2 object put --help > /tmp/help.txt
+          cat /tmp/help.txt
+          if grep -q -- '--header' /tmp/help.txt; then
+            printf 'WRANGLER_CUSTOM_METADATA_SURFACE=PASS\n'
+          else
+            printf 'WRANGLER_CUSTOM_METADATA_SURFACE=ABSENT\n'
+          fi
