@@ -1,0 +1,50 @@
+name: P0 Phase E Shadow Key Prep QA
+
+on:
+  push:
+    branches:
+      - chatgpt/qa-p0-alpha-free-render-removal-2026-09-08
+
+permissions:
+  contents: read
+
+jobs:
+  qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Fetch exact Alpha candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git init /tmp/alpha
+          git -C /tmp/alpha remote add origin https://github.com/annachou5566/alpha-realtime-bot.git
+          git -C /tmp/alpha fetch --depth=1 origin d79dc1f2f39261b2ea95aac8d88c72ee4ae174fb
+          git -C /tmp/alpha checkout --detach FETCH_HEAD
+          test "$(git -C /tmp/alpha rev-parse HEAD)" = "d79dc1f2f39261b2ea95aac8d88c72ee4ae174fb"
+          printf 'ALPHA_EXACT_HEAD=PASS\n'
+
+      - name: Static shadow-key gates
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd /tmp/alpha
+          node --check index.js
+          grep -q "process.env.TAILS_CACHE_KEY || 'tails_cache.json'" index.js
+          ! grep -q "const key = 'tails_cache.v2.candidate.json'" index.js
+          printf 'SHADOW_KEY_STATIC=PASS\n'
+
+      - name: Install exact dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd /tmp/alpha
+          npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Run full Alpha tests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd /tmp/alpha
+          npm test
+          printf 'ALPHA_BACKEND_TESTS=PASS\n'
