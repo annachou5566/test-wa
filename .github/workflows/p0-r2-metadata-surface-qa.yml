@@ -13,11 +13,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - name: Check Wrangler 4.125 object put metadata surface
+      - name: Check Wrangler 4.130 object put metadata surface
         shell: bash
         run: |
           set -Eeuo pipefail
-          npx --yes wrangler@4.125.0 r2 object put --help > /tmp/help.txt
+          npx --yes wrangler@4.130.0 r2 object put --help > /tmp/help.txt
           cat /tmp/help.txt
           if grep -q -- '--header' /tmp/help.txt; then
             printf 'WRANGLER_CUSTOM_METADATA_SURFACE=PASS\n'
