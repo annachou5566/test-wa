@@ -1,0 +1,54 @@
+name: P0 Phase D Cloudflare Operator QA
+
+on:
+  push:
+    branches:
+      - chatgpt/qa-p0-alpha-free-render-removal-2026-09-08
+
+permissions:
+  contents: read
+
+jobs:
+  qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Fetch exact Alpha candidate
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git init /tmp/alpha
+          git -C /tmp/alpha remote add origin https://github.com/annachou5566/alpha-realtime-bot.git
+          git -C /tmp/alpha fetch --depth=1 origin 13c2051ab7ece62f0719a34cc4c44e22d500646c
+          git -C /tmp/alpha checkout --detach FETCH_HEAD
+          test "$(git -C /tmp/alpha rev-parse HEAD)" = "13c2051ab7ece62f0719a34cc4c44e22d500646c"
+          printf 'ALPHA_EXACT_HEAD=PASS\n'
+
+      - name: Operator static gates
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          cd /tmp/alpha
+          python3 -m py_compile scripts/cloudflare-p0-r2-shadow.py
+          python3 scripts/cloudflare-p0-r2-shadow.py --help >/dev/null
+          grep -q 'tails_cache.v2.candidate.json' scripts/cloudflare-p0-r2-shadow.py
+          grep -q 'LIVE_KEY = "tails_cache.json"' scripts/cloudflare-p0-r2-shadow.py
+          grep -q '"--remote"' scripts/cloudflare-p0-r2-shadow.py
+          grep -q '"--storage-class", "Standard"' scripts/cloudflare-p0-r2-shadow.py
+          grep -q 'LIVE_KEY_METADATA_UNCHANGED=PASS' scripts/cloudflare-p0-r2-shadow.py
+          grep -q 'rollback_shadow' scripts/cloudflare-p0-r2-shadow.py
+          printf 'CLOUDFLARE_OPERATOR_STATIC=PASS\n'
+
+      - name: Confirm current Wrangler command surface
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          npx --yes wrangler@4.125.0 auth token --help >/dev/null
+          npx --yes wrangler@4.125.0 r2 object put --help >/tmp/put-help.txt
+          npx --yes wrangler@4.125.0 r2 object get --help >/tmp/get-help.txt
+          grep -q -- '--remote' /tmp/put-help.txt
+          grep -q -- '--storage-class' /tmp/put-help.txt
+          grep -q -- '--file' /tmp/put-help.txt
+          grep -q -- '--remote' /tmp/get-help.txt
+          grep -q -- '--file' /tmp/get-help.txt
+          printf 'WRANGLER_SURFACE=PASS\n'
