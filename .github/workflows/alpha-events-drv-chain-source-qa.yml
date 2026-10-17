@@ -1,0 +1,30 @@
+name: Alpha Events DRV chain source QA
+
+on:
+  push:
+    branches: [qa/alpha-events-drv-chain-20261017]
+    paths: [.github/workflows/alpha-events-drv-chain-source-qa.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  isolated-source-qa:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Checkout exact public price-writer candidate
+        uses: actions/checkout@v4
+        with:
+          repository: annachou5566/data-fetcher-king
+          ref: d5a8f05815c8e7b6e93fa355d175a277871591e4
+          persist-credentials: false
+      - name: Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install isolated imported dependencies only
+        run: python -m pip install -q --disable-pip-version-check requests python-dotenv boto3 cloudscraper
+      - name: New chain regression + existing event Claim/Peak tests
+        working-directory: scripts
+        run: python -m unittest -v test_alpha_event_chain_identity test_alpha_event_claim_peak
