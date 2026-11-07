@@ -23,7 +23,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: annachou5566/data-fetcher-king
-          ref: c2968712adf09a326447237e87fc39abbbd87410
+          ref: 147418d81d40ea582fb5b2a1b08f1d3939ddb3f1
           persist-credentials: false
       - uses: actions/setup-python@v5
         with:
