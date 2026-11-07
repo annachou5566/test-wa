@@ -45,3 +45,28 @@ jobs:
           assert "\n  push:" not in text
           print("WA_AE_R19_OFFLINE_QA_SOURCE_POLICY=PASS")
           PY
+
+      - name: Validate the exact deployed Alpha Events Preview (public assets only)
+        env:
+          WA_PREVIEW: https://44ee0900.wave-alpha.pages.dev
+        run: |
+          set -euo pipefail
+          curl -fsSL --max-time 20 "$WA_PREVIEW/js/alpha-events.js" -o /tmp/wa-ae-hosted.js
+          curl -fsSL --max-time 20 "$WA_PREVIEW/" -o /tmp/wa-ae-hosted.html
+          node --check /tmp/wa-ae-hosted.js
+          node <<'JS'
+          const fs=require('fs'),assert=require('assert/strict');
+          const source=fs.readFileSync('/tmp/wa-ae-hosted.js','utf8');
+          const html=fs.readFileSync('/tmp/wa-ae-hosted.html','utf8');
+          assert.match(html,/alpha-events\.js\?v=13/);
+          const match=source.match(/  function priceQualityMessage\(e\) \{[\s\S]*?\n  \}\n/);
+          assert.ok(match, 'Price quality helper must be present in hosted bundle');
+          const quality=Function(match[0]+';return priceQualityMessage;')();
+          assert.match(quality({status:'expired_unverified'}),/Chưa có dữ liệu/);
+          assert.match(quality({status:'ended',event_time:'2025-08-27T21:30:00Z',
+            listing_price:{vwap:0.07958345,date:'2025-04-24'}}),/Mốc giá Claim/);
+          assert.equal(quality({status:'ended',event_time:'2026-10-19T13:00:00Z',
+            listing_price:{vwap:0.331516,date:'2026-10-19'}}),'');
+          assert.ok(source.includes("peakPct >= 0 ? '\\u25b2 ' : '\\u25bc '"));
+          console.log('WA_AE_R19_HOSTED_PREVIEW=PASS');
+          JS
