@@ -51,7 +51,7 @@ jobs:
           WA_PREVIEW: https://44ee0900.wave-alpha.pages.dev
         run: |
           set -euo pipefail
-          curl -fsSL --max-time 20 "$WA_PREVIEW/js/alpha-events.js" -o /tmp/wa-ae-hosted.js
+          curl -fsSL --max-time 20 "$WA_PREVIEW/public/js/alpha-events.js" -o /tmp/wa-ae-hosted.js
           curl -fsSL --max-time 20 "$WA_PREVIEW/" -o /tmp/wa-ae-hosted.html
           node --check /tmp/wa-ae-hosted.js
           node <<'JS'
