@@ -1,0 +1,47 @@
+name: WaveAlpha Alpha Events price/schedule offline candidate QA
+
+on:
+  push:
+    branches:
+      - chatgpt/wa-ae-price-quality-qa-20261107
+    paths:
+      - .github/workflows/wa-ae-price-quality-qa-20261107.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wa-ae-price-quality-qa-20261107
+  cancel-in-progress: true
+
+jobs:
+  offline-price-quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: Read exact public writer candidate (no secret or R2 access)
+        uses: actions/checkout@v4
+        with:
+          repository: annachou5566/data-fetcher-king
+          ref: a7fcb3ee8d6575fe81d4de9d16e37f1f5a1cdd1a
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Validate syntax and run historical + integrity offline regressions
+        run: |
+          python -m py_compile scripts/sync_listing_prices.py scripts/alpha_events_price_integrity.py scripts/test_alpha_events_price_integrity.py
+          cd scripts
+          python -m unittest -q test_alpha_events_lite_schedule test_alpha_events_price_integrity
+      - name: Verify workflow retains one writer and one schedule
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          text = Path('.github/workflows/sync_listing_prices.yml').read_text()
+          assert text.count('cron:') == 1
+          assert "cron: '7,37 * * * *'" in text
+          assert "group: sync-listing-prices" in text
+          assert "  workflow_dispatch:" in text
+          assert "\n  push:" not in text
+          print("WA_AE_R19_OFFLINE_QA_SOURCE_POLICY=PASS")
+          PY
